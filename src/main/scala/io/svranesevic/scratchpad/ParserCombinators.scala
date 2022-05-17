@@ -154,6 +154,28 @@ object Parser {
       tail <- zeroOrMore(p)
     } yield head +: tail
 
+  def oneOrMore[A](p: Parser[A], separator: Parser[_]): Parser[List[A]] =
+    (input: String) => {
+      val res = scala.collection.mutable.ListBuffer[A]()
+
+      @tailrec
+      def go(input: String): Result[List[A]] = {
+        (separator *> p).run(input) match {
+          case Failure(_) => Success(res.toList, input)
+          case Success(value, input) =>
+            res += value
+            go(input)
+        }
+      }
+
+      p.run(input) match {
+        case Success(head, input) =>
+          res += head
+          go(input)
+        case f @ Failure(_) => f
+      }
+    }
+
   def optional[A](p: Parser[A]): Parser[Option[A]] =
     (input: String) =>
       p.run(input) match {
@@ -264,50 +286,68 @@ object ParserCombinatorsMain extends App {
   object JsonParser {
     sealed trait JValue
     object JValue {
-      // Simplified JSON Ast
-      case object JNull extends JValue
-      case class JString(s: String) extends JValue
-      case class JBoolean(value: Boolean) extends JValue
-      case class JLong(num: Long) extends JValue
-      case class JObject(obj: Map[String, JValue]) extends JValue
+      case class JObject(obj: List[(String, JValue)]) extends JValue
       case class JArray(arr: List[JValue]) extends JValue
+      case class JString(s: String) extends JValue
+      case class JNumber(num: Long) extends JValue
+      case class JBoolean(value: Boolean) extends JValue
+      case object JNull extends JValue
+      type JNull = JNull.type
     }
 
     import JValue._
 
-    private val letter: Parser[Char] = (('a' to 'z').toList ++ ('A' to 'Z').toList).map(char).reduce(_ | _)
-    private val digits: Parser[List[Int]] = oneOrMore(digit)
-    private val long: Parser[Long] = digits ~> (_.mkString.toLong)
+    // Grammar per https://www.json.org/json-en.html, but without escaping and number fraction&exponent
 
-    private def whitespace: Parser[_] = zeroOrMore(character(' ') | character('\n') | character('\r') | character('\t'))
-    private def comma: Parser[_] = whitespace *> ',' <* whitespace
+    private def jsonParser = element
 
-    private def jNull: Parser[JNull.type] = string("null") as JNull
+    private def value: Parser[JValue] =
+      `object` | array | string | number | boolean | `null`
 
-    private def jString: Parser[JString] =
-      ('"' *> zeroOrMore(letter | digit | ' ') <* '"') ~> (s => JString(s.mkString))
+    private def `object`: Parser[JObject] =
+      (('{' *> whitespace <* '}') as JObject(Nil)) |
+        (('{' *> members <* '}') ~> JObject)
 
-    private def jBool: Parser[JBoolean] =
-      ("false" as JBoolean(false)) | ("true" as JBoolean(true))
+    private def members: Parser[List[(String, JValue)]] =
+      oneOrMore(member, Parser.char(','))
 
-    private def jLong: Parser[JLong] = long ~> JLong
+    private def member: Parser[(String, JValue)] =
+      ((whitespace *> '"' *> characters <* '"' <* whitespace) ~ (char(':') *> element))
 
-    private def jKey: Parser[String] =
-      whitespace *> '"' *> oneOrMore(letter | digit) ~> (_.mkString) <* '"' <* whitespace
+    private def array: Parser[JArray] =
+      (('[' *> whitespace <* ']') as JArray(Nil)) |
+        (('[' *> elements <* ']') ~> JArray)
 
-    private def jValue: Parser[JValue] =
-      whitespace *> (jNull | jString | jBool | jLong | jArray | jObject) <* whitespace
+    private def elements: Parser[List[JValue]] = oneOrMore(element, Parser.char(','))
 
-    private def jKeyValue: Parser[(String, JValue)] = jKey ~ (":" *> jValue)
+    private def element: Parser[JValue] = whitespace *> value <* whitespace
 
-    private def jObject: Parser[JObject] =
-      ('{' *> whitespace *> zeroOrMore(jKeyValue, comma) <* whitespace <* '}') ~>
-        (keyValuePairs => JObject(keyValuePairs.toMap))
+    private def string: Parser[JString] = '"' *> characters ~> JString <* '"'
 
-    private def jArray: Parser[JArray] =
-      ('[' *> whitespace *> zeroOrMore(jValue, comma) <* whitespace <* ']') ~> JArray
+    private def characters: Parser[String] = zeroOrMore(character) ~> (_.mkString)
 
-    def run(json: String): Result[JValue] = (whitespace *> jObject <* whitespace).run(json)
+    private def character: Parser[String] =
+      allowedCharacters.map(char).reduce(_ | _) ~> (_.toString)
+    private def allowedCharacters = (' ' to '~').filter(c => c != '"' && c != '\\').toList
+
+    private def number: Parser[JNumber] =
+      integer ~> JNumber
+
+    private def integer: Parser[Long] =
+      (oneNine ~ digits) ~> (t => t._1 +: t._2) ~> (_.mkString.toLong) |
+        digit ~> (_.toLong) |
+        (Parser.string("-") ~ oneNine ~ digits) ~> (t => t._1._1 +: t._1._2 +: t._2) ~> (_.mkString.toLong) |
+        (Parser.string("-") ~ digit) ~> (t => t._1 concat t._2) ~> (_.toLong)
+    private def digits: Parser[List[String]] = oneOrMore(digit)
+    private def digit: Parser[String] = Parser.string("0") | oneNine
+    private def oneNine: Parser[String] = ('1' to '9').map(_.toString).map(Parser.string).reduce(_ | _)
+
+    private def boolean: Parser[JBoolean] = ("false" as JBoolean(false)) | ("true" as JBoolean(true))
+    private def `null`: Parser[JNull] = "null" as JNull
+
+    private def whitespace: Parser[_] = zeroOrMore(char(' ') | char('\n') | char('\r') | char('\t'))
+
+    def run(json: String): Result[JValue] = jsonParser.run(json)
   }
 
   val Success(parsedJson, _) =
@@ -317,6 +357,7 @@ object ParserCombinatorsMain extends App {
         "idType": "Snowflake",
         "availableIdTypes": [{ "type": "uuid", "version": 1 }, { "type": "uuid", "version": 4 }, "snowflake"],
         "universe": 42,
+        "oneOverUniverse": -42,
         "42": true,
         "41": false,
         "emptyArray": [    ],
@@ -327,31 +368,33 @@ object ParserCombinatorsMain extends App {
     import JsonParser.JValue._
 
     JObject(
-      Map(
+      List(
         "id" -> JString("15248544"),
         "idType" -> JString("Snowflake"),
-        "availableIdTypes" -> JArray(
-          List(
-            JObject(
-              Map(
-                "type" -> JString("uuid"),
-                "version" -> JLong(1)
-              )
-            ),
-            JObject(
-              Map(
-                "type" -> JString("uuid"),
-                "version" -> JLong(4)
-              )
-            ),
-            JString("snowflake")
-          )
-        ),
-        "universe" -> JLong(42),
+        "availableIdTypes" ->
+          JArray(
+            List(
+              JObject(
+                List(
+                  "type" -> JString("uuid"),
+                  "version" -> JNumber(1)
+                )
+              ),
+              JObject(
+                List(
+                  "type" -> JString("uuid"),
+                  "version" -> JNumber(4)
+                )
+              ),
+              JString("snowflake")
+            )
+          ),
+        "universe" -> JNumber(42),
+        "oneOverUniverse" -> JNumber(-42),
         "42" -> JBoolean(true),
         "41" -> JBoolean(false),
-        "emptyArray" -> JArray(List.empty),
-        "emptyObject" -> JObject(Map.empty)
+        "emptyArray" -> JArray(Nil),
+        "emptyObject" -> JObject(Nil)
       )
     )
   }
