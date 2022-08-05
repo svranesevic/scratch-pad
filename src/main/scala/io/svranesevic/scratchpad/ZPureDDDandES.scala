@@ -34,10 +34,21 @@ trait AggregateRoot[State, Event, Error] {
     if (!condition) reject(error)
     else ZPure.unit
 
-  final protected def accept(e: Event): DomainLogic = ZPure.log[State, Event](e)
+  final protected def accept(e: Event): DomainLogic =
+    for {
+      state <- ZPure.get[State]
+      newState = handleEvent(state, e)
+      _ <- ZPure.set(newState)
+      _ <- ZPure.log(e)
+    } yield ()
 
   final protected def accept(e: Event, es: Event*): DomainLogic =
-    es.foldLeft(accept(e))(_ log _)
+    for {
+      state <- ZPure.get[State]
+      newState = replay(state, Chunk(e +: es: _*))
+      _ <- ZPure.set(newState)
+      _ <- es.foldLeft(ZPure.log[State, Event](e))(_ log _)
+    } yield ()
 
   final protected def reject(e: Error): DomainLogic = ZPure.fail[Error](e)
 
@@ -65,9 +76,9 @@ trait AggregateRoot[State, Event, Error] {
 
     val (newEvents, errorOrState) = action.runAll(currentState)
 
-    errorOrState
-      .map(_._1)
-      .map(_ => replay(state, newEvents) -> newEvents)
+    errorOrState.map { case (state, _) =>
+      state -> newEvents
+    }
   }
 
   def runAll(action: DomainLogic, actions: DomainLogic*)(
@@ -140,7 +151,8 @@ object ZPureDDDandESMain extends App {
       Account
         .withdrawMoney(5_000)
         .runAll(OpenAccount("account-1", 1_000_000))
-    assert(Account.replay(state, events) == OpenAccount("account-1", 1_000_000 - 5_000))
+    assert(state == OpenAccount("account-1", 1_000_000 - 5_000))
+    assert(Account.replay(OpenAccount("account-1", 1_000_000), events) == OpenAccount("account-1", 1_000_000 - 5_000))
   }
 
   {
