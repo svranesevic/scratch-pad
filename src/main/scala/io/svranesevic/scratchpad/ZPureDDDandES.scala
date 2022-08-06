@@ -6,13 +6,6 @@ import zio.{Chunk, NonEmptyChunk}
 
 import java.time.ZonedDateTime
 
-sealed trait AccountEvent {
-  val id: String
-}
-case class AccountCreated(id: String, balance: BigDecimal) extends AccountEvent
-case class MoneyDeposited(id: String, amount: BigDecimal) extends AccountEvent
-case class MoneyWithdraw(id: String, amount: BigDecimal) extends AccountEvent
-
 sealed trait AccountState {
   val id: String
 }
@@ -23,6 +16,13 @@ sealed trait AccountError
 case class OverdraftDisallowed(currentBalance: BigDecimal) extends AccountError
 case class ActionOnFrozenAccountDisallowed(frozenOn: ZonedDateTime) extends AccountError
 case object InitialBalanceMustNotBeNegative extends AccountError
+
+sealed trait AccountEvent {
+  val id: String
+}
+case class AccountCreated(id: String, balance: BigDecimal) extends AccountEvent
+case class MoneyDeposited(id: String, amount: BigDecimal) extends AccountEvent
+case class MoneyWithdraw(id: String, amount: BigDecimal) extends AccountEvent
 
 trait AggregateRoot[State, Event, Error] {
 
@@ -56,6 +56,8 @@ trait AggregateRoot[State, Event, Error] {
     throw new RuntimeException(s"Unhandled event: $e with state $s")
 
   final protected def unhandled(e: Event): Nothing = throw new RuntimeException(s"Unhandled event: $e")
+
+  final def replay(e: Event): State = handleCreation(e)
 
   final def replay(es: NonEmptyChunk[Event]): State = {
     val initial = handleCreation(es.head)
@@ -114,15 +116,15 @@ object ZPureDDDandESMain extends App {
         _ <- accept(MoneyDeposited(account.id, amount))
       } yield ()
 
-    // TODO: In-progress
-//    def create(
-//        id: String,
-//        balance: BigDecimal
-//    ): ZValidation[AccountEvent, AccountError, Unit] =
-//      for {
-//        _ <- assert(balance >= 0, InitialBalanceMustNotBeNegative)
-//        _ <- accept(AccountCreated(id, balance))
-//      } yield ()
+    def create(
+        id: String,
+        balance: BigDecimal
+    ): Either[NonEmptyChunk[AccountError], AccountCreated] =
+      (for {
+        balance <-
+          if (balance < 0) ZValidation.fail(InitialBalanceMustNotBeNegative)
+          else ZValidation.succeed(balance)
+      } yield AccountCreated(id, balance)).toEither
 
     override protected def handleCreation(event: AccountEvent): OpenAccount =
       event match {
@@ -206,7 +208,25 @@ object ZPureDDDandESMain extends App {
   }
 
   {
-    // TODO: In-progress
-    // val log = Account.create("Created-Account", -42).runValidation
+    val Left(errors) = Account.create("Not-Created-Account", -42)
+    assert(errors == NonEmptyChunk(InitialBalanceMustNotBeNegative))
+
+    val Right(creationEvent) = Account.create("Created-Account", 1000)
+    val Right((state, events)) =
+      Account.runAll(
+        Account.depositMoney(3_000),
+        Account.depositMoney(3_000),
+        Account.depositMoney(3_000),
+        Account.withdrawMoney(10_000)
+      )(Account.replay(creationEvent))
+    assert(state == OpenAccount("Created-Account", 0))
+    assert(
+      events == Chunk(
+        MoneyDeposited("Created-Account", 3_000),
+        MoneyDeposited("Created-Account", 3_000),
+        MoneyDeposited("Created-Account", 3_000),
+        MoneyWithdraw("Created-Account", 10_000)
+      )
+    )
   }
 }
