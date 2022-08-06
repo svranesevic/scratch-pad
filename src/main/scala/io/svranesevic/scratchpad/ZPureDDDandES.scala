@@ -22,7 +22,7 @@ sealed trait AccountEvent {
 }
 case class AccountCreated(id: String, balance: BigDecimal) extends AccountEvent
 case class MoneyDeposited(id: String, amount: BigDecimal) extends AccountEvent
-case class MoneyWithdraw(id: String, amount: BigDecimal) extends AccountEvent
+case class MoneyWithdrawn(id: String, amount: BigDecimal) extends AccountEvent
 
 trait AggregateRoot[State, Event, Error] {
 
@@ -107,7 +107,7 @@ object ZPureDDDandESMain extends App {
         account <- state
         balance = account.balance
         _ <- assert(balance >= amount, OverdraftDisallowed(balance))
-        _ <- accept(MoneyWithdraw(account.id, amount))
+        _ <- accept(MoneyWithdrawn(account.id, amount))
       } yield ()
 
     def depositMoney(amount: BigDecimal): DomainLogic =
@@ -135,7 +135,7 @@ object ZPureDDDandESMain extends App {
     override protected def handleEvent(state: OpenAccount, event: AccountEvent): OpenAccount =
       event match {
         case MoneyDeposited(_, amount) => state.copy(balance = state.balance + amount)
-        case MoneyWithdraw(_, amount)  => state.copy(balance = state.balance - amount)
+        case MoneyWithdrawn(_, amount) => state.copy(balance = state.balance - amount)
         case e                         => unhandled(state, e)
       }
   }
@@ -162,7 +162,7 @@ object ZPureDDDandESMain extends App {
       Account
         .run(Account.withdrawMoney(5_000))(state = OpenAccount("Execute-Account", 12_000))
     assert(state == OpenAccount("Execute-Account", 7_000))
-    assert(events == Chunk(MoneyWithdraw("Execute-Account", 5_000)))
+    assert(events == Chunk(MoneyWithdrawn("Execute-Account", 5_000)))
   }
 
   {
@@ -180,7 +180,7 @@ object ZPureDDDandESMain extends App {
         MoneyDeposited("Chaining-Account", 3_000),
         MoneyDeposited("Chaining-Account", 3_000),
         MoneyDeposited("Chaining-Account", 3_000),
-        MoneyWithdraw("Chaining-Account", 10_000)
+        MoneyWithdrawn("Chaining-Account", 10_000)
       )
     )
   }
@@ -225,7 +225,7 @@ object ZPureDDDandESMain extends App {
         MoneyDeposited("Created-Account", 3_000),
         MoneyDeposited("Created-Account", 3_000),
         MoneyDeposited("Created-Account", 3_000),
-        MoneyWithdraw("Created-Account", 10_000)
+        MoneyWithdrawn("Created-Account", 10_000)
       )
     )
   }
