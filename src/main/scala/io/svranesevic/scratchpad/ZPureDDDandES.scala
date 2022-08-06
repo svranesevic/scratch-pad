@@ -71,12 +71,9 @@ trait AggregateRoot[State, Event, Error] {
   protected def handleCreation(event: Event): State
 
   def run(action: DomainLogic)(
-      state: State,
-      events: Chunk[Event] = Chunk.empty
+      state: State
   ): Either[Cause[Error], (State, Chunk[Event])] = {
-    val currentState = replay(state, events)
-
-    val (newEvents, errorOrState) = action.runAll(currentState)
+    val (newEvents, errorOrState) = action.runAll(state)
 
     errorOrState.map { case (state, _) =>
       state -> newEvents
@@ -84,17 +81,24 @@ trait AggregateRoot[State, Event, Error] {
   }
 
   def runAll(action: DomainLogic, actions: DomainLogic*)(
-      state: State,
-      events: Chunk[Event] = Chunk.empty
+      state: State
   ): Either[Cause[Error], (State, Chunk[Event])] = {
-    val initial = run(action)(state, events)
-    actions
-      .foldLeft(initial) { case (acc, action) =>
-        acc.flatMap { case (state, events) =>
-          run(action)(state)
-            .map { case (state, newEvents) => state -> (events ++: newEvents) }
-        }
+    @scala.annotation.tailrec
+    def go(
+        actions: List[DomainLogic],
+        state: State,
+        events: Chunk[Event]
+    ): Either[Cause[Error], (State, Chunk[Event])] =
+      actions match {
+        case Nil => Right(state -> events)
+        case hd :: tl =>
+          hd.runAll(state) match {
+            case (_, Left(err))                    => Left(err)
+            case (newEvents, Right((newState, _))) => go(tl, newState, events ++ newEvents)
+          }
       }
+
+    go((action +: actions).toList, state, Chunk.empty)
   }
 }
 
@@ -212,13 +216,14 @@ object ZPureDDDandESMain extends App {
     assert(errors == NonEmptyChunk(InitialBalanceMustNotBeNegative))
 
     val Right(creationEvent) = Account.create("Created-Account", 1000)
+    val initialState = Account.replay(creationEvent)
     val Right((state, events)) =
       Account.runAll(
         Account.depositMoney(3_000),
         Account.depositMoney(3_000),
         Account.depositMoney(3_000),
         Account.withdrawMoney(10_000)
-      )(Account.replay(creationEvent))
+      )(initialState)
     assert(state == OpenAccount("Created-Account", 0))
     assert(
       events == Chunk(
