@@ -4,3 +4,4 @@
 .metals
 target
 project/target
+metals.sbt
