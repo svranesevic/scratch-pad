@@ -1,6 +1,6 @@
 package io.svranesevic.scratchpad
 
-final case class State[S, A](run: S => (S, A)) {
+final case class State[S, A](run: S => (S, A)) extends AnyVal {
 
   def runEval(initialState: S): A = run(initialState)._2
   def runState(initialState: S): S = run(initialState)._1
@@ -138,7 +138,7 @@ object StateMain extends App {
       case s @ Nil => s -> None
     }
 
-    val stackManip: State[Stack, Option[Int]] =
+    val stackProgram: State[Stack, Option[Int]] =
       for {
         _ <- push(3)
         maybeA <- pop
@@ -149,7 +149,7 @@ object StateMain extends App {
         } yield a + b
       } yield maybeSum
 
-    val (stack, value) = stackManip.run(List(7, 6, 5, 4, 3, 2, 1))
+    val (stack, value) = stackProgram.run(List(7, 6, 5, 4, 3, 2, 1))
     assert(stack == List(6, 5, 4, 3, 2, 1))
     assert(value == Some(10))
   }
