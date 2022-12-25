@@ -14,7 +14,7 @@ trait Spreadsheet {
 
   def update(cell: Cell): Unit
 
-  final def scan(range: Range): LazyList[Cell] = {
+  final def scan(range: SRange): LazyList[Cell] = {
     val minRow = range.minRow.getOrElse(0)
     val maxRow = range.maxRow.getOrElse(rows - 1)
 
@@ -47,10 +47,10 @@ object Spreadsheet {
   }
 }
 
-final case class Range(minRow: Option[Int], maxRow: Option[Int], minCol: Option[Int], maxCol: Option[Int])
-object Range {
-  def column(i: Int): Range = Range(None, None, Some(i), Some(i))
-  def row(i: Int): Range = Range(Some(i), Some(i), None, None)
+final case class SRange(minRow: Option[Int], maxRow: Option[Int], minCol: Option[Int], maxCol: Option[Int])
+object SRange {
+  def column(i: Int): SRange = SRange(None, None, Some(i), Some(i))
+  def row(i: Int): SRange = SRange(Some(i), Some(i), None, None)
 }
 
 final case class Cell(col: Int, row: Int, content: Content) {
@@ -107,7 +107,7 @@ object Formula {
   case class TextLiteral(text: String) extends Variable
   case class NumberLiteral(number: Double) extends Variable
   case class CellValue(col: Int, row: Int) extends Variable
-  case class CellsValues(range: Range) extends Variable
+  case class CellsValues(range: SRange) extends Variable
 
   final case class Sum(variables: Variable*) extends Formula {
     override def evaluate(spreadsheet: Spreadsheet): Value = {
