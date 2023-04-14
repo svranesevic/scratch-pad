@@ -168,9 +168,8 @@ object LazyList {
 
   def unfold[A, S](s: S)(f: S => Option[(A, S)]): LazyList[A] =
     f(s) match {
-      case Some((value, state)) =>
-        LazyList.cons(value, unfold(state)(f))
-      case None => LazyList.empty
+      case Some((value, state)) => LazyList.cons(value, unfold(state)(f))
+      case None                 => LazyList.empty
     }
 
   private def cons[A](head: => A, tail: => LazyList[A]): LazyList[A] = {
