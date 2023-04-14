@@ -13,7 +13,7 @@ final case class Fetch[+T](private val step: Cache => IO[Result[T]]) extends Any
 
   def flatMap[U](fn: T => Fetch[U]): Fetch[U] = Fetch.flatMap(this, fn)
 
-  def zip[U](that: Fetch[U]): Fetch[(T, U)] = Fetch.zip(this, that)
+  def zip[U](that: => Fetch[U]): Fetch[(T, U)] = Fetch.zip(this, that)
 
   def zipWith[U, V](that: Fetch[U])(fn: (T, U) => V): Fetch[V] = Fetch.map2(this, that)(fn)
 
@@ -67,14 +67,16 @@ object Fetch {
 
   def fail[T](t: Throwable): Fetch[T] = Fetch(_ => Failed(t).pure[IO])
 
-  def zip[A, B](a: Fetch[A], b: Fetch[B]): Fetch[(A, B)] = Fetch { cache =>
-    (a.step(cache) both b.step(cache)).map {
-      case (Done(a), Done(b))                         => Done((a, b))
-      case (Done(a), Blocked(rs, cont))               => Blocked(rs, cont.map(b => a -> b))
-      case (Blocked(rs, cont), Done(b))               => Blocked(rs, cont.map(a => a -> b))
-      case (Blocked(rs1, cont1), Blocked(rs2, cont2)) => Blocked(rs1 ++ rs2, cont1 zip cont2)
-      case (f: Failed, _)                             => f
-      case (_, f: Failed)                             => f
+  def zip[A, B](a: => Fetch[A], b: => Fetch[B]): Fetch[(A, B)] = Fetch { cache =>
+    IO.defer {
+      (a.step(cache) both b.step(cache)).map {
+        case (Done(a), Done(b))                         => Done((a, b))
+        case (Done(a), Blocked(rs, cont))               => Blocked(rs, cont.map(b => a -> b))
+        case (Blocked(rs, cont), Done(b))               => Blocked(rs, cont.map(a => a -> b))
+        case (Blocked(rs1, cont1), Blocked(rs2, cont2)) => Blocked(rs1 ++ rs2, cont1 zip cont2)
+        case (f: Failed, _)                             => f
+        case (_, f: Failed)                             => f
+      }
     }
   }
 
@@ -82,20 +84,11 @@ object Fetch {
     Fetch.sequence(f +: fs)
 
   def sequence[T](fs: Seq[Fetch[T]]): Fetch[Seq[T]] = {
-    // Pretty, but stack unsafe
-    // def cons[T](t: (T, Seq[T])): Seq[T] = t._1 +: t._2
-    // fs.toList match {
-    //   case Nil          => Fetch.succeed(Nil)
-    //   case head :: tail => head.zip(sequence(tail)).map(cons)
-    // }
-    val builder = Seq.newBuilder[T]
-    builder.sizeHint(fs.size)
-
-    fs
-      .foldLeft(Fetch.succeed(builder)) { case (fs, f) =>
-        (fs zip f).flatMap { case (ts, t) => Fetch.succeed(ts.addOne(t)) }
-      }
-      .map(_.result())
+    def cons[T](t: (T, Seq[T])): Seq[T] = t._1 +: t._2
+    fs.toList match {
+      case Nil          => Fetch.succeed(Nil)
+      case head :: tail => head.zip(sequence(tail)).map(cons)
+    }
   }
 
   def traverseU[T, U](ts: Seq[T])(fn: T => Fetch[U]): Fetch[Seq[U]] =
