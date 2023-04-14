@@ -101,7 +101,7 @@ object Formula {
         case TextLiteral(text)     => Text(text) :: Nil
         case NumberLiteral(number) => Number(number) :: Nil
         case CellValue(col, row)   => spreadsheet.evaluate(col, row) :: Nil
-        case CellsValues(range)    => spreadsheet.scan(range).map(_.evaluate(spreadsheet))
+        case CellsValues(range)    => spreadsheet.scan(range).map(_.evaluate(spreadsheet)).toList.toSeq
       }
   }
   case class TextLiteral(text: String) extends Variable
