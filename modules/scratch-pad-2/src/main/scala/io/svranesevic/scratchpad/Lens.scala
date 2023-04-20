@@ -16,7 +16,7 @@ sealed trait Lens[In, Out] { self =>
       override def get(in: In): Out1 = (self.get _ andThen that.get _)(in)
 
       override protected def update(in: In, out1: Out1): In = {
-        val out0 = self.get(in)
+        val out0    = self.get(in)
         val newOut0 = that.update(out0, out1)
         self.update(in, newOut0)
       }
@@ -27,7 +27,7 @@ object Lens {
 
   def apply[In, Out](inToOut: In => Out, updateInWithOut: (In, Out) => In): Lens[In, Out] =
     new Lens[In, Out] {
-      override def get(in: In): Out = inToOut(in)
+      override def get(in: In): Out                       = inToOut(in)
       override protected def update(in: In, out: Out): In = updateInWithOut(in, out)
     }
 }
@@ -43,15 +43,15 @@ object LensMain extends App {
   val kirksFavGuitar = Guitar("ESP", "M II")
 
   val guitarModelLens: Lens[Guitar, String] = Lens(_.model, (in, m) => in.copy(model = m))
-  val kirksGuitarModel = guitarModelLens.get(kirksFavGuitar)
+  val kirksGuitarModel                      = guitarModelLens.get(kirksFavGuitar)
   assert(kirksGuitarModel == "M II")
 
   // 2. Composing Lenses
   val metallica = RockBand("Metallica", 1981, Guitarist("Kirk Hammett", Guitar("ESP", "M II")))
 
-  val rockBandLeadLens: Lens[RockBand, Guitarist] = Lens(_.leadGuitarist, (in, l) => in.copy(leadGuitarist = l))
+  val rockBandLeadLens: Lens[RockBand, Guitarist]  = Lens(_.leadGuitarist, (in, l) => in.copy(leadGuitarist = l))
   val guitaristGuitarLens: Lens[Guitarist, Guitar] = Lens(_.favoriteGuitar, (in, g) => in.copy(favoriteGuitar = g))
-  val leadGuitarModel = (rockBandLeadLens andThen guitaristGuitarLens andThen guitarModelLens)
+  val leadGuitarModel = rockBandLeadLens andThen guitaristGuitarLens andThen guitarModelLens
 
   val metallicasLeadFavGuitar = leadGuitarModel.get(metallica)
   assert(kirksGuitarModel == "M II")

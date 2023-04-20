@@ -4,7 +4,7 @@ final case class Writer[L, A](private val both: (List[L], A)) extends AnyVal {
 
   def run(): (List[L], A) = both
 
-  def runEval(): A = both._2
+  def runEval(): A      = both._2
   def runLog(): List[L] = both._1
 
   def map[B](f: A => B): Writer[L, B] = {
@@ -13,7 +13,7 @@ final case class Writer[L, A](private val both: (List[L], A)) extends AnyVal {
   }
 
   def flatMap[B](f: A => Writer[L, B]): Writer[L, B] = {
-    val (l, a) = both
+    val (l, a)   = both
     val (ll, aa) = f(a).both
     new Writer[L, B]((l ++ ll, aa))
   }
@@ -35,7 +35,7 @@ object WriterMain extends App {
     for {
       a <- Writer.lift(42).tell(42).tell(48).tell(485)
       b <- Writer.lift(58).tell(1).tell(2).tell(3)
-    } yield (a + b)
+    } yield a + b
 
   val (log, out) = program.run()
   assert(out == 100)

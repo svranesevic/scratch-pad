@@ -19,11 +19,10 @@ object Simple {
           branch(left.fold(leaf)(branch), right.fold(leaf)(branch))
       }
 
-    def numLeaves(): Int = {
+    def numLeaves(): Int =
       // Curried fold signature helps type inference
       // Otherwise we'd have to go with fold[Int](_ => 1, _ + _)
       fold(_ => 1)(_ + _)
-    }
 
     def sumElements[B >: A]()(implicit ev: Numeric[B]): Double =
       fold[Double](ev.toDouble)(_ + _)
@@ -31,18 +30,18 @@ object Simple {
     def oddElements[B >: A]()(implicit ev: Numeric[B]): List[A] =
       fold[List[A]] {
         case value if ev.toInt(value) % 2 != 0 => value :: Nil
-        case _                                 => Nil
+        case _ => Nil
       }(_ ++: _)
 
     def evenElements[B >: A]()(implicit ev: Numeric[B]): List[A] =
       fold[List[A]] {
         case value if ev.toInt(value) % 2 == 0 => value :: Nil
-        case _                                 => Nil
+        case _ => Nil
       }(_ ++: _)
   }
 
   object Tree {
-    case class Leaf[A](value: A) extends Tree[A]
+    case class Leaf[A](value: A)                        extends Tree[A]
     case class Branch[A](left: Tree[A], right: Tree[A]) extends Tree[A]
   }
 }
@@ -85,15 +84,15 @@ object Advanced {
     def oddElements[B >: A]()(implicit ev: Numeric[B]): List[A] =
       fold[List[A]] {
         case LeafCase(value) if ev.toInt(value) % 2 != 0 => value :: Nil
-        case LeafCase(_)                                 => Nil
-        case BranchCase(left, right)                     => left ++: right
+        case LeafCase(_)             => Nil
+        case BranchCase(left, right) => left ++: right
       }
 
     def evenElements[B >: A]()(implicit ev: Numeric[B]): List[A] =
       fold[List[A]] {
         case LeafCase(value) if ev.toInt(value) % 2 == 0 => value :: Nil
-        case LeafCase(_)                                 => Nil
-        case BranchCase(left, right)                     => left ++: right
+        case LeafCase(_)             => Nil
+        case BranchCase(left, right) => left ++: right
       }
   }
 
@@ -106,10 +105,10 @@ object Advanced {
         }
     }
 
-    case class LeafCase[E](value: E) extends TreeCase[E, Nothing]
+    case class LeafCase[E](value: E)                     extends TreeCase[E, Nothing]
     case class BranchCase[Self](left: Self, right: Self) extends TreeCase[Nothing, Self]
 
-    def leaf[E](value: E): Tree[E] = Tree(LeafCase(value))
+    def leaf[E](value: E): Tree[E]                        = Tree(LeafCase(value))
     def branch[E](left: Tree[E], right: Tree[E]): Tree[E] = Tree(BranchCase(left, right))
   }
 }

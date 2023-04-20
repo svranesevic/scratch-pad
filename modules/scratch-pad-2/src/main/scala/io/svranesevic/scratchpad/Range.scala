@@ -49,7 +49,7 @@ object RangeMain extends App {
   assert(r25.toList == 2 :: 3 :: 4 :: 5 :: Nil)
   assert(Range(2, 2).toList == 2 :: Nil)
 
-  val r810 = Range(8, 10)
+  val r810   = Range(8, 10)
   val merged = Range.merge(r25, r34, r47, r810)
   assert(merged == Range(2, 7) :: Range(8, 10) :: Nil)
 }

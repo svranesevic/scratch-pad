@@ -40,7 +40,7 @@ object Spreadsheet {
     override protected def cellAt(col: Int, row: Int): Cell =
       map.getOrElse(((col, row)), Cell(col, row, Content.empty()))
 
-    override def evaluate(cell: Cell): Value = evaluate(cell.col, cell.row)
+    override def evaluate(cell: Cell): Value         = evaluate(cell.col, cell.row)
     override def evaluate(col: Int, row: Int): Value = cellAt(col, row).evaluate(this)
 
     override def update(cell: Cell): Unit = map += ((cell.col, cell.row) -> cell)
@@ -50,7 +50,7 @@ object Spreadsheet {
 final case class SRange(minRow: Option[Int], maxRow: Option[Int], minCol: Option[Int], maxCol: Option[Int])
 object SRange {
   def column(i: Int): SRange = SRange(None, None, Some(i), Some(i))
-  def row(i: Int): SRange = SRange(Some(i), Some(i), None, None)
+  def row(i: Int): SRange    = SRange(Some(i), Some(i), None, None)
 }
 
 final case class Cell(col: Int, row: Int, content: Content) {
@@ -58,8 +58,8 @@ final case class Cell(col: Int, row: Int, content: Content) {
 }
 object Cell {
   def apply(col: Int, row: Int, number: Double): Cell = Cell(col, row, Content(number))
-  def apply(col: Int, row: Int, text: String): Cell = Cell(col, row, Content(text))
-  def apply(col: Int, row: Int): Cell = Cell(col, row, Content.empty())
+  def apply(col: Int, row: Int, text: String): Cell   = Cell(col, row, Content(text))
+  def apply(col: Int, row: Int): Cell                 = Cell(col, row, Content.empty())
 }
 
 sealed trait Content {
@@ -70,19 +70,19 @@ sealed trait Content {
     }
 }
 object Content {
-  case class Literal(value: Value) extends Content
+  case class Literal(value: Value)        extends Content
   case class Calculated(formula: Formula) extends Content
 
-  def empty(): Content = Content.Literal(Value.Empty)
-  def apply(text: String): Content = Content.Literal(Value.Text(text))
-  def apply(number: Double): Content = Content.Literal(Value.Number(number))
+  def empty(): Content                 = Content.Literal(Value.Empty)
+  def apply(text: String): Content     = Content.Literal(Value.Text(text))
+  def apply(number: Double): Content   = Content.Literal(Value.Number(number))
   def apply(formula: Formula): Content = Content.Calculated(formula)
 }
 
 sealed trait Value
 object Value {
-  final case object Empty extends Value
-  final case class Text(text: String) extends Value
+  case object Empty                       extends Value
+  final case class Text(text: String)     extends Value
   final case class Number(number: Double) extends Value
   final case class Error(message: String) extends Value
 }
@@ -104,10 +104,10 @@ object Formula {
         case CellsValues(range)    => spreadsheet.scan(range).map(_.evaluate(spreadsheet)).toList.toSeq
       }
   }
-  case class TextLiteral(text: String) extends Variable
+  case class TextLiteral(text: String)     extends Variable
   case class NumberLiteral(number: Double) extends Variable
   case class CellValue(col: Int, row: Int) extends Variable
-  case class CellsValues(range: SRange) extends Variable
+  case class CellsValues(range: SRange)    extends Variable
 
   final case class Sum(variables: Variable*) extends Formula {
     override def evaluate(spreadsheet: Spreadsheet): Value = {
@@ -154,9 +154,9 @@ object SpreadSheetMain extends ZIOAppDefault {
 
   override def run = {
     val spreadsheet = Spreadsheet()
-    val zero = Cell(0, 0, Content(42))
-    val five = Cell(5, 5, Content(8))
-    val one = Cell(1, 1, Content(Formula.Sum(Formula.CellValue(5, 5))))
+    val zero        = Cell(0, 0, Content(42))
+    val five        = Cell(5, 5, Content(8))
+    val one         = Cell(1, 1, Content(Formula.Sum(Formula.CellValue(5, 5))))
     val two = Cell(
       2,
       2,

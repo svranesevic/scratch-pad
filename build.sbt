@@ -1,12 +1,21 @@
-scalaVersion := "2.13.9"
-scalacOptions += "-language:higherKinds"
-addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.13.2" cross CrossVersion.full)
+ThisBuild / organization := "io.svranesevic"
+ThisBuild / version      := "0.1.0-SNAPSHOT"
 
-enablePlugins(JmhPlugin)
-
-libraryDependencies ++= Seq(
-  "dev.zio" %% "zio-prelude" % "1.0.0-RC13",
-  "dev.zio" %% "zio" % "2.0.0-RC5",
+lazy val commonDependencies = Seq(
+  "dev.zio"       %% "zio"         % "2.0.13",
   "org.typelevel" %% "cats-effect" % "3.4.1"
 )
-scalacOptions += "-Wconf:cat=other-match-analysis:error"
+
+lazy val `scratch-pad-2` = (project in file("modules/scratch-pad-2"))
+  .settings(
+    scalaVersion := "2.13.10",
+    libraryDependencies ++= commonDependencies
+  )
+  .enablePlugins(JmhPlugin)
+
+lazy val `scratch-pad-3` = (project in file("modules/scratch-pad-3"))
+  .settings(
+    scalaVersion := "3.3.0-RC4",
+    libraryDependencies ++= commonDependencies
+  )
+  .enablePlugins(JmhPlugin)

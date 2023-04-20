@@ -1,13 +1,14 @@
 package io.svranesevic.scratchpad.wip
 
+import cats.data.Ior
 import cats.effect.IO
 import cats.effect.kernel.Ref
-import cats.syntax.all._
+import cats.syntax.all.*
 import cats.effect.IOApp
 
 final case class Fetch[+T](private val step: Cache => IO[Result[T]]) extends AnyVal {
 
-  import Result._
+  import Result.*
 
   def map[U](fn: T => U): Fetch[U] = Fetch.map(this, fn)
 
@@ -28,7 +29,11 @@ final case class Fetch[+T](private val step: Cache => IO[Result[T]]) extends Any
 
 object Fetch {
 
-  import Result._
+  import Result.*
+
+  def succeed[T](t: T): Fetch[T] = Fetch(_ => Done(t).pure[IO])
+
+  def fail[T](t: Throwable): Fetch[T] = Fetch(_ => Failed(t).pure[IO])
 
   private def map[T, U](f: Fetch[T], fn: T => U): Fetch[U] = Fetch[U] { cache =>
     f.step(cache).map {
@@ -53,21 +58,13 @@ object Fetch {
 
   private def recover[T, U >: T](f: Fetch[T], fn: PartialFunction[Throwable, Fetch[U]]): Fetch[U] = Fetch { cache =>
     f.step(cache).flatMap {
-      case failed: Failed =>
-        fn.lift(failed.t) match {
-          case Some(recovered) => recovered.step(cache)
-          case None            => failed.pure[IO]
-        }
+      case failed: Failed    => fn.lift(failed.t).fold(failed.pure[IO])(_.step(cache))
       case Blocked(rs, cont) => Blocked[U](rs, cont.recoverWith(fn)).pure[IO]
-      case done: Done[T]     => done.pure[IO]
+      case done: Done[?]     => done.pure[IO]
     }
   }
 
-  def succeed[T](t: T): Fetch[T] = Fetch(_ => Done(t).pure[IO])
-
-  def fail[T](t: Throwable): Fetch[T] = Fetch(_ => Failed(t).pure[IO])
-
-  def zip[A, B](a: => Fetch[A], b: => Fetch[B]): Fetch[(A, B)] = Fetch { cache =>
+  private def zip[A, B](a: => Fetch[A], b: => Fetch[B]): Fetch[(A, B)] = Fetch { cache =>
     IO.defer {
       (a.step(cache) both b.step(cache)).map {
         case (Done(a), Done(b))                         => Done((a, b))
@@ -84,7 +81,7 @@ object Fetch {
     Fetch.sequence(f +: fs)
 
   def sequence[T](fs: Seq[Fetch[T]]): Fetch[Seq[T]] = {
-    def cons[T](t: (T, Seq[T])): Seq[T] = t._1 +: t._2
+    def cons(t: (T, Seq[T])): Seq[T] = t._1 +: t._2
     fs.toList match {
       case Nil          => Fetch.succeed(Nil)
       case head :: tail => head.zip(sequence(tail)).map(cons)
@@ -99,25 +96,25 @@ object Fetch {
 
   def apply[R, T](dataSource: DataSource[R, T], request: R): Fetch[T] =
     Fetch { cache =>
-      def cont[T](status: Ref[IO, RequestStatus[T]]): IO[Result[T]] =
+      def cont(status: Ref[IO, RequestStatus[T]]): IO[Result[T]] =
         status.get.map {
           case RequestStatus.Done(a)   => Result.Done(a)
           case RequestStatus.Failed(t) => Result.Failed(t)
           case RequestStatus.Pending   => throw new RuntimeException(s"impossible")
         }
 
-      cache.get(request).flatMap { ref: Option[Ref[IO, RequestStatus[T]]] =>
+      cache.get(request).flatMap { (ref: Option[Ref[IO, RequestStatus[T]]]) =>
         ref match {
           case None =>
             for {
               status <- Ref.of[IO, RequestStatus[T]](RequestStatus.Pending)
-              _ <- cache.put(request, status)
-              blocking = Request.Blocking[R, T](request, dataSource, status)
+              _      <- cache.put(request, status)
+              blocking = Request[R, T](request, dataSource, status)
             } yield Result.Blocked(blocking :: Nil, Fetch(_ => cont(status)))
 
           case Some(status) =>
             status.get.flatMap {
-              case _: RequestStatus.Done[T] => cont(status)
+              case _: RequestStatus.Done[?] => cont(status)
               case _: RequestStatus.Failed  => cont(status)
               case RequestStatus.Pending    => Result.Blocked(Nil, Fetch(_ => cont(status))).pure[IO]
             }
@@ -125,40 +122,44 @@ object Fetch {
       }
     }
 
-  def compile[A](f: Fetch[A], cache: Cache): IO[A] =
+  private def compile[A](f: Fetch[A], cache: Cache): IO[A] =
     f.step(cache).flatMap {
       case Result.Done(a)           => a.pure[IO]
       case Result.Failed(t)         => t.raiseError[IO, A]
       case Result.Blocked(rs, cont) => fetchBlocked(rs, cont, cache)
     }
 
-  private def fetchBlocked[A](reqs: Seq[Request], cont: Fetch[A], cache: Cache): IO[A] = {
-    val byDataSource = reqs.toList.groupBy { case Request.Blocking(_, dataSource, _) => dataSource }.toList
-    val fetchDataSourcesInParallel =
-      byDataSource
-        .parTraverse_ { case (dataSource, reqs) =>
-          val (requests, statuses) =
-            reqs.unzip { case Request.Blocking(request, _, status) => (request, status) }
+  private def fetchBlocked[R, A](requests: Seq[Request], cont: Fetch[A], cache: Cache): IO[A] = {
+    val byDataSource =
+      requests
+        .map(_.concrete)
+        .collect { case r: Request.Concrete[R, A] => r }
+        .groupBy(_.dataSource)
+        .toSeq
 
-          fetchFromDataSource(dataSource, requests, statuses)
-        }
+    val fetchDataSourcesInParallel =
+      byDataSource.parTraverse_ { case (dataSource, requests) =>
+        val uniqueRequests = requests.groupMap(_.request)(_.status)
+        fetchFromDataSource(dataSource, uniqueRequests)
+      }
 
     fetchDataSourcesInParallel >> compile(cont, cache)
   }
 
   private def fetchFromDataSource[R, T](
       dataSource: DataSource[R, T],
-      requests: Seq[R],
-      statuses: Seq[Ref[IO, RequestStatus[T]]]
+      statusesByRequest: Map[R, Seq[Ref[IO, RequestStatus[T]]]]
   ): IO[Unit] =
     dataSource
-      .fetch(requests)
+      .fetch(statusesByRequest.keys.toSeq)
       .recoverWith { t =>
+        val statuses = statusesByRequest.values.flatten.toSeq
         statuses.parTraverse_(_.set(RequestStatus.Failed(t))).as(Seq.empty)
       }
       .flatMap { results =>
-        (statuses zip results).parTraverse_ { case (status, result) =>
-          status.set(RequestStatus.Done(result))
+        results.toSeq.parTraverse_ { case (request, result) =>
+          val statuses = statusesByRequest(request)
+          statuses.parTraverse_(_.set(RequestStatus.Done(result)))
         }
       }
 }
@@ -166,24 +167,45 @@ object Fetch {
 sealed trait Result[+T]
 object Result {
   case class Blocked[T](reqs: Seq[Request], cont: Fetch[T]) extends Result[T]
-  case class Done[T](a: T) extends Result[T]
-  case class Failed(t: Throwable) extends Result[Nothing]
+  case class Done[T](a: T)                                  extends Result[T]
+  case class Failed(t: Throwable)                           extends Result[Nothing]
 }
 
-sealed trait Request
+sealed trait Request {
+  type R
+  type T
+
+  def request: R
+  def dataSource: DataSource[R, T]
+  def status: Ref[IO, RequestStatus[T]]
+
+  def concrete: Request.Concrete[R, T] = Request.Concrete(request, dataSource, status)
+}
+
 object Request {
-  case class Blocking[R, T](request: R, dataSource: DataSource[R, T], status: Ref[IO, RequestStatus[T]]) extends Request
+
+  case class Concrete[R, T](request: R, dataSource: DataSource[R, T], status: Ref[IO, RequestStatus[T]])
+
+  def apply[R1, T1](r: R1, ds: DataSource[R1, T1], s: Ref[IO, RequestStatus[T1]]): Request =
+    new Request {
+      override type R = R1
+      override type T = T1
+
+      override def request: R                        = r
+      override def dataSource: DataSource[R, T]      = ds
+      override def status: Ref[IO, RequestStatus[T]] = s
+    }
 }
 
 sealed trait RequestStatus[+A]
 object RequestStatus {
-  case object Pending extends RequestStatus[Nothing]
-  case class Done[A](a: A) extends RequestStatus[A]
+  case object Pending             extends RequestStatus[Nothing]
+  case class Done[A](a: A)        extends RequestStatus[A]
   case class Failed(t: Throwable) extends RequestStatus[Nothing]
 }
 
 trait DataSource[R, A] {
-  def fetch(reqs: Seq[R]): IO[Seq[A]]
+  def fetch(reqs: Seq[R]): IO[Map[R, A]]
 }
 
 trait Cache {
@@ -194,14 +216,14 @@ object Cache {
 
   def default: Cache =
     new Cache {
-      private val map: scala.collection.concurrent.Map[Any, Ref[IO, RequestStatus[_]]] =
-        scala.collection.concurrent.TrieMap.empty[Any, Ref[IO, RequestStatus[_]]]
+      private val map: scala.collection.concurrent.Map[Any, Ref[IO, RequestStatus[?]]] =
+        scala.collection.concurrent.TrieMap.empty[Any, Ref[IO, RequestStatus[?]]]
 
       override def get[T](key: Any): IO[Option[Ref[IO, RequestStatus[T]]]] =
         IO(map.get(key).map(_.asInstanceOf[Ref[IO, RequestStatus[T]]]))
 
       override def put[T](key: Any, value: Ref[IO, RequestStatus[T]]): IO[Unit] =
-        IO(map.putIfAbsent(key, value.asInstanceOf[Ref[IO, RequestStatus[_]]]))
+        IO(map.putIfAbsent(key, value.asInstanceOf[Ref[IO, RequestStatus[?]]]))
     }
 }
 
@@ -215,18 +237,21 @@ object FetchMain extends IOApp.Simple {
   }
 
   case object TweetsRepository extends DataSource[TweetRequest, Option[Tweet]] {
-    override def fetch(reqs: Seq[TweetRequest]): IO[Seq[Option[Tweet]]] = {
-      val ids = reqs.collect { case TweetRequest.ById(id) => id }
+    override def fetch(reqs: Seq[TweetRequest]): IO[Map[TweetRequest, Option[Tweet]]] = {
+      val ids   = reqs.map { case TweetRequest.ById(id) => id }
       val query = s"SELECT * FROM tweets WHERE id IN (${ids.mkString(", ")})"
+
+      val response = ids.map(id => id -> Tweet(id, s"tweet $id").some).toMap
+      val result   = reqs.map { case r @ TweetRequest.ById(id) => r -> response.getOrElse(id, none) }
 
       IO
         .println(s" => Fetching tweets: $query")
-        .as(ids.map(id => Tweet(id, s"tweet $id").some))
+        .as(result.toMap.widen)
     }
   }
 
   val getTweetIds: Fetch[Seq[TweetRequest.ById]] =
-    Fetch.succeed(Seq(1, 2, 3, 4, 5).map(TweetRequest.ById))
+    Fetch.succeed(Seq(1, 2, 3, 4, 5).map(TweetRequest.ById.apply))
 
   def getTweetById(id: Int): Fetch[Option[Tweet]] =
     getTweet(TweetRequest.ById(id))
@@ -234,20 +259,15 @@ object FetchMain extends IOApp.Simple {
   def getTweet(req: TweetRequest): Fetch[Option[Tweet]] =
     Fetch(TweetsRepository, req)
 
-  sealed trait ProfileRequest
-  object ProfileRequest {
-    case class ById(id: Int) extends ProfileRequest
-  }
-
   val followingTweets: Fetch[Seq[Tweet]] =
     for {
-      ids <- getTweetIds
+      ids    <- getTweetIds
       tweets <- Fetch.traverse(ids)(getTweet)
     } yield tweets
 
   val trendingTweets: Fetch[Seq[Tweet]] =
     for {
-      ids <- Fetch.succeed(Seq(2, 6, 7, 8))
+      ids    <- Fetch.succeed(Seq(2, 6, 7, 8, 2))
       tweets <- Fetch.traverse(ids)(getTweetById)
     } yield tweets
 
@@ -261,7 +281,7 @@ object FetchMain extends IOApp.Simple {
       .foldLeft(Fetch.succeed(0L)) { case (query1, query2) =>
         for {
           acc <- query1
-          i <- query2
+          i   <- query2
         } yield acc + i
       }
       .compile(Cache.default)

@@ -11,7 +11,7 @@ trait Parser[+A] {
 
   def ~[B](other: Parser[B]): Parser[(A, B)] =
     for {
-      left <- self
+      left  <- self
       right <- other
     } yield left -> right
 
@@ -73,7 +73,7 @@ object Parser {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
-      def go(input: String, ps: List[Parser[A]]): Result[List[A]] = {
+      def go(input: String, ps: List[Parser[A]]): Result[List[A]] =
         ps match {
           case Nil => Success(res.toList, input)
           case p :: ps =>
@@ -84,7 +84,6 @@ object Parser {
                 go(input, ps)
             }
         }
-      }
 
       go(input, ps)
     }
@@ -108,14 +107,13 @@ object Parser {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
-      def go(input: String): Result[List[A]] = {
+      def go(input: String): Result[List[A]] =
         p.run(input) match {
           case Failure(_) => Success(res.toList, input)
           case Success(value, input) =>
             res += value
             go(input)
         }
-      }
 
       go(input)
     }
@@ -131,14 +129,13 @@ object Parser {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
-      def go(input: String): Result[List[A]] = {
+      def go(input: String): Result[List[A]] =
         (separator *> p).run(input) match {
           case Failure(_) => Success(res.toList, input)
           case Success(value, input) =>
             res += value
             go(input)
         }
-      }
 
       p.run(input) match {
         case Success(head, input) =>
@@ -159,14 +156,13 @@ object Parser {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
-      def go(input: String): Result[List[A]] = {
+      def go(input: String): Result[List[A]] =
         (separator *> p).run(input) match {
           case Failure(_) => Success(res.toList, input)
           case Success(value, input) =>
             res += value
             go(input)
         }
-      }
 
       p.run(input) match {
         case Success(head, input) =>
@@ -187,7 +183,7 @@ object Parser {
 
   object Result {
     case class Success[A](value: A, input: String) extends Result[A]
-    case class Failure(cause: String) extends Result[Nothing]
+    case class Failure(cause: String)              extends Result[Nothing]
   }
 }
 
@@ -211,7 +207,7 @@ object ParserCombinatorsMain extends App {
   // ADT + Parse result type widening + DSL syntax with implicit conversions - instead of string("void") & string("int")
   sealed trait SimpleAdt
   case object Void extends SimpleAdt
-  case object Int extends SimpleAdt
+  case object Int  extends SimpleAdt
 
   val orResult1: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).run("int a")
   val orResult2: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).run("void a")
@@ -219,10 +215,10 @@ object ParserCombinatorsMain extends App {
   assert(orResult2 == Success[SimpleAdt](Void, " a"))
 
   // Combine ~ and |
-  val A = char('A')
-  val B = char('B')
-  val C = char('C')
-  val bOrElseC = B | C
+  val A            = char('A')
+  val B            = char('B')
+  val C            = char('C')
+  val bOrElseC     = B | C
   val aAndThenBorC = A ~ bOrElseC
   assert(aAndThenBorC.run("ABZ") == Success(('A', 'B'), "Z"))
   assert(aAndThenBorC.run("ACZ") == Success(('A', 'C'), "Z"))
@@ -238,13 +234,13 @@ object ParserCombinatorsMain extends App {
   val sequencedResult = sequenced.run("abcDGF")
   assert(sequencedResult == Success('a' :: 'b' :: 'c' :: Nil, "DGF"))
 
-  val stacksafeParser = sequence(("a" * 10000).map(character _).toList)
+  val stacksafeParser = sequence(("a" * 10000).toCharArray().map(character _).toList)
   assert(stacksafeParser.run("a" * 20000) == Success(List.fill(10000)('a'), "a" * 10000))
 
   // Contextual parsing
   val digit: Parser[Int] = List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(d => string(d.toString)).reduce(_ | _) ~> (_.toInt)
   val contextualParser: Parser[String] = digit ~~> (d => string((d * 2).toString))
-  val contextualParserResult = contextualParser.run("510")
+  val contextualParserResult           = contextualParser.run("510")
   assert(contextualParserResult == Success("10", ""))
 
   // Zero or more
@@ -287,11 +283,11 @@ object ParserCombinatorsMain extends App {
     sealed trait JValue
     object JValue {
       case class JObject(obj: List[(String, JValue)]) extends JValue
-      case class JArray(arr: List[JValue]) extends JValue
-      case class JString(s: String) extends JValue
-      case class JNumber(num: Long) extends JValue
-      case class JBoolean(value: Boolean) extends JValue
-      case object JNull extends JValue
+      case class JArray(arr: List[JValue])            extends JValue
+      case class JString(s: String)                   extends JValue
+      case class JNumber(num: Long)                   extends JValue
+      case class JBoolean(value: Boolean)             extends JValue
+      case object JNull                               extends JValue
       type JNull = JNull.type
     }
 
@@ -306,23 +302,23 @@ object ParserCombinatorsMain extends App {
 
     private def `object`: Parser[JObject] =
       (('{' *> whitespace <* '}') as JObject(Nil)) |
-        (('{' *> members <* '}') ~> JObject)
+        (('{' *> members <* '}') ~> JObject.apply)
 
     private def members: Parser[List[(String, JValue)]] =
       oneOrMore(member, Parser.char(','))
 
     private def member: Parser[(String, JValue)] =
-      ((whitespace *> '"' *> characters <* '"' <* whitespace) ~ (char(':') *> element))
+      (whitespace *> '"' *> characters <* '"' <* whitespace) ~ (char(':') *> element)
 
     private def array: Parser[JArray] =
       (('[' *> whitespace <* ']') as JArray(Nil)) |
-        (('[' *> elements <* ']') ~> JArray)
+        (('[' *> elements <* ']') ~> JArray.apply)
 
     private def elements: Parser[List[JValue]] = oneOrMore(element, Parser.char(','))
 
     private def element: Parser[JValue] = whitespace *> value <* whitespace
 
-    private def string: Parser[JString] = '"' *> characters ~> JString <* '"'
+    private def string: Parser[JString] = '"' *> characters ~> JString.apply <* '"'
 
     private def characters: Parser[String] = zeroOrMore(character) ~> (_.mkString)
 
@@ -331,7 +327,7 @@ object ParserCombinatorsMain extends App {
     private def allowedCharacters = (' ' to '~').filter(c => c != '"' && c != '\\').toList
 
     private def number: Parser[JNumber] =
-      integer ~> JNumber
+      integer ~> JNumber.apply
 
     private def integer: Parser[Long] =
       (oneNine ~ digits) ~> (t => t._1 +: t._2) ~> (_.mkString.toLong) |
@@ -339,11 +335,11 @@ object ParserCombinatorsMain extends App {
         (Parser.string("-") ~ oneNine ~ digits) ~> (t => t._1._1 +: t._1._2 +: t._2) ~> (_.mkString.toLong) |
         (Parser.string("-") ~ digit) ~> (t => t._1 concat t._2) ~> (_.toLong)
     private def digits: Parser[List[String]] = oneOrMore(digit)
-    private def digit: Parser[String] = Parser.string("0") | oneNine
-    private def oneNine: Parser[String] = ('1' to '9').map(_.toString).map(Parser.string).reduce(_ | _)
+    private def digit: Parser[String]        = Parser.string("0") | oneNine
+    private def oneNine: Parser[String]      = ('1' to '9').map(_.toString).map(Parser.string).reduce(_ | _)
 
     private def boolean: Parser[JBoolean] = ("false" as JBoolean(false)) | ("true" as JBoolean(true))
-    private def `null`: Parser[JNull] = "null" as JNull
+    private def `null`: Parser[JNull]     = "null" as JNull
 
     private def whitespace: Parser[_] = zeroOrMore(char(' ') | char('\n') | char('\r') | char('\t'))
 
@@ -363,38 +359,38 @@ object ParserCombinatorsMain extends App {
         "emptyArray": [    ],
         "emptyObject": {}
       }
-    """)
+    """): @unchecked
   val expectedJson = {
     import JsonParser.JValue._
 
     JObject(
       List(
-        "id" -> JString("15248544"),
+        "id"     -> JString("15248544"),
         "idType" -> JString("Snowflake"),
         "availableIdTypes" ->
           JArray(
             List(
               JObject(
                 List(
-                  "type" -> JString("uuid"),
+                  "type"    -> JString("uuid"),
                   "version" -> JNumber(1)
                 )
               ),
               JObject(
                 List(
-                  "type" -> JString("uuid"),
+                  "type"    -> JString("uuid"),
                   "version" -> JNumber(4)
                 )
               ),
               JString("snowflake")
             )
           ),
-        "universe" -> JNumber(42),
+        "universe"        -> JNumber(42),
         "oneOverUniverse" -> JNumber(-42),
-        "42" -> JBoolean(true),
-        "41" -> JBoolean(false),
-        "emptyArray" -> JArray(Nil),
-        "emptyObject" -> JObject(Nil)
+        "42"              -> JBoolean(true),
+        "41"              -> JBoolean(false),
+        "emptyArray"      -> JArray(Nil),
+        "emptyObject"     -> JObject(Nil)
       )
     )
   }

@@ -148,7 +148,7 @@ sealed trait LazyList[+A] {
 
 }
 object LazyList {
-  private case object Empty extends LazyList[Nothing]
+  private case object Empty                                           extends LazyList[Nothing]
   private case class Cons[+A](head: () => A, tail: () => LazyList[A]) extends LazyList[A]
 
   def constant[A](a: A): LazyList[A] = unfold(a)(_ => Some(a -> a))
