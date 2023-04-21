@@ -103,22 +103,20 @@ object Fetch {
           case RequestStatus.Pending   => throw new RuntimeException(s"impossible")
         }
 
-      cache.get(request).flatMap { (ref: Option[Ref[IO, RequestStatus[T]]]) =>
-        ref match {
-          case None =>
-            for {
-              status <- Ref.of[IO, RequestStatus[T]](RequestStatus.Pending)
-              _      <- cache.put(request, status)
-              blocking = Request[R, T](request, dataSource, status)
-            } yield Result.Blocked(blocking :: Nil, Fetch(_ => cont(status)))
+      cache.get[T](request).flatMap {
+        case None =>
+          for {
+            status <- Ref.of[IO, RequestStatus[T]](RequestStatus.Pending)
+            _      <- cache.put(request, status)
+            blocking = Request[R, T](request, dataSource, status)
+          } yield Result.Blocked(blocking :: Nil, Fetch(_ => cont(status)))
 
-          case Some(status) =>
-            status.get.flatMap {
-              case _: RequestStatus.Done[?] => cont(status)
-              case _: RequestStatus.Failed  => cont(status)
-              case RequestStatus.Pending    => Result.Blocked(Nil, Fetch(_ => cont(status))).pure[IO]
-            }
-        }
+        case Some(status) =>
+          status.get.flatMap {
+            case _: RequestStatus.Done[?] => cont(status)
+            case _: RequestStatus.Failed  => cont(status)
+            case RequestStatus.Pending    => Result.Blocked(Nil, Fetch(_ => cont(status))).pure[IO]
+          }
       }
     }
 
