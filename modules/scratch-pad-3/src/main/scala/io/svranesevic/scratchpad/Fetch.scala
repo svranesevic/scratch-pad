@@ -1,4 +1,4 @@
-package io.svranesevic.scratchpad.wip
+package io.svranesevic.scratchpad
 
 import cats.data.Ior
 import cats.effect.IO
