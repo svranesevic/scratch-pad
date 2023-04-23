@@ -6,23 +6,58 @@ import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import cats.effect.IOApp
 
-final case class Fetch[+T](private val step: Cache => IO[Result[T]]) extends AnyVal {
+final class Fetch[+T] private (private val step: Cache => IO[Result[T]]) extends AnyVal { self =>
 
   import Result.*
 
-  def map[U](fn: T => U): Fetch[U] = Fetch.map(this, fn)
+  def map[U](fn: T => U): Fetch[U] =
+    Fetch { cache =>
+      IO.defer {
+        self.step(cache).map {
+          case Done(a)           => Done(fn(a))
+          case Blocked(rs, cont) => Blocked(rs, cont.map(fn))
+          case f: Failed         => f
+        }
+      }
+    }
 
-  def flatMap[U](fn: T => Fetch[U]): Fetch[U] = Fetch.flatMap(this, fn)
+  def flatMap[U](fn: T => Fetch[U]): Fetch[U] =
+    Fetch { cache =>
+      IO.defer {
+        self.step(cache).flatMap {
+          case Done(a)           => fn(a).step(cache)
+          case Blocked(rs, cont) => Blocked(rs, cont.flatMap(fn)).pure[IO]
+          case f: Failed         => f.pure[IO]
+        }
+      }
+    }
 
-  def zip[U](that: => Fetch[U]): Fetch[(T, U)] = Fetch.zip(this, that)
+  def zip[U](that: => Fetch[U]): Fetch[(T, U)] =
+    Fetch { cache =>
+      (self.step(cache) both that.step(cache)).map {
+        case (Done(a), Done(b))                         => Done((a, b))
+        case (Done(a), Blocked(rs, cont))               => Blocked(rs, cont.map(b => a -> b))
+        case (Blocked(rs, cont), Done(b))               => Blocked(rs, cont.map(a => a -> b))
+        case (Blocked(rs1, cont1), Blocked(rs2, cont2)) => Blocked(rs1 ++ rs2, cont1 zip cont2)
+        case (f: Failed, _)                             => f
+        case (_, f: Failed)                             => f
+      }
+    }
 
-  def zipWith[U, V](that: Fetch[U])(fn: (T, U) => V): Fetch[V] = Fetch.map2(this, that)(fn)
+  def zipWith[U, V](that: => Fetch[U])(fn: (T, U) => V): Fetch[V] =
+    self.zip(that).map(fn.tupled)
 
   def recover[U >: T](fn: PartialFunction[Throwable, U]): Fetch[U] =
-    recoverWith(fn.andThen(Fetch.succeed _))
+    self.recoverWith(fn.andThen(Fetch.succeed _))
 
   def recoverWith[U >: T](fn: PartialFunction[Throwable, Fetch[U]]): Fetch[U] =
-    Fetch.recover(this, fn)
+    Fetch { cache =>
+      self.step(cache).flatMap {
+        case failed: Failed    => fn.lift(failed.t).fold(failed.pure[IO])(_.step(cache))
+        case Blocked(rs, cont) => Blocked[U](rs, cont.recoverWith(fn)).pure[IO]
+        case done: Done[?]     => done.pure[IO]
+      }
+    }
 
   def compile(cache: Cache): IO[T] = Fetch.compile(this, cache)
 }
@@ -34,48 +69,6 @@ object Fetch {
   def succeed[T](t: T): Fetch[T] = Fetch(_ => Done(t).pure[IO])
 
   def fail[T](t: Throwable): Fetch[T] = Fetch(_ => Failed(t).pure[IO])
-
-  private def map[T, U](f: Fetch[T], fn: T => U): Fetch[U] = Fetch[U] { cache =>
-    f.step(cache).map {
-      case Done(a)           => Done(fn(a))
-      case Blocked(rs, cont) => Blocked(rs, cont.map(fn))
-      case f: Failed         => f
-    }
-  }
-
-  private def flatMap[T, U](f: Fetch[T], fn: T => Fetch[U]): Fetch[U] = Fetch { cache =>
-    IO.defer {
-      f.step(cache).flatMap {
-        case Done(a)           => fn(a).step(cache)
-        case Blocked(rs, cont) => Blocked(rs, cont.flatMap(fn)).pure[IO]
-        case f: Failed         => f.pure[IO]
-      }
-    }
-  }
-
-  private def map2[T, U, V](a: Fetch[T], b: Fetch[U])(fn: (T, U) => V): Fetch[V] =
-    Fetch.zip(a, b).map(fn.tupled)
-
-  private def recover[T, U >: T](f: Fetch[T], fn: PartialFunction[Throwable, Fetch[U]]): Fetch[U] = Fetch { cache =>
-    f.step(cache).flatMap {
-      case failed: Failed    => fn.lift(failed.t).fold(failed.pure[IO])(_.step(cache))
-      case Blocked(rs, cont) => Blocked[U](rs, cont.recoverWith(fn)).pure[IO]
-      case done: Done[?]     => done.pure[IO]
-    }
-  }
-
-  private def zip[A, B](a: => Fetch[A], b: => Fetch[B]): Fetch[(A, B)] = Fetch { cache =>
-    IO.defer {
-      (a.step(cache) both b.step(cache)).map {
-        case (Done(a), Done(b))                         => Done((a, b))
-        case (Done(a), Blocked(rs, cont))               => Blocked(rs, cont.map(b => a -> b))
-        case (Blocked(rs, cont), Done(b))               => Blocked(rs, cont.map(a => a -> b))
-        case (Blocked(rs1, cont1), Blocked(rs2, cont2)) => Blocked(rs1 ++ rs2, cont1 zip cont2)
-        case (f: Failed, _)                             => f
-        case (_, f: Failed)                             => f
-      }
-    }
-  }
 
   def sequence[T](f: Fetch[T], fs: Fetch[T]*): Fetch[Seq[T]] =
     Fetch.sequence(f +: fs)
@@ -130,8 +123,8 @@ object Fetch {
   private def fetchBlocked[R, A](requests: Seq[Request], cont: Fetch[A], cache: Cache): IO[A] = {
     val byDataSource =
       requests
-        .map(_.concrete)
-        .collect { case r: Request.Concrete[R, A] => r }
+        .map(_.withRT)
+        .collect { case r: Request.WithRT[R, A] => r }
         .groupBy(_.dataSource)
         .toSeq
 
@@ -145,8 +138,8 @@ object Fetch {
   }
 
   private def fetchFromDataSource[R, T](
-      dataSource: DataSource[R, T],
-      statusesByRequest: Map[R, Seq[Ref[IO, RequestStatus[T]]]]
+    dataSource: DataSource[R, T],
+    statusesByRequest: Map[R, Seq[Ref[IO, RequestStatus[T]]]]
   ): IO[Unit] =
     dataSource
       .fetch(statusesByRequest.keys.toSeq)
@@ -160,6 +153,9 @@ object Fetch {
           statuses.parTraverse_(_.set(RequestStatus.Done(result)))
         }
       }
+
+  private def apply[T](step: Cache => IO[Result[T]]): Fetch[T] =
+    new Fetch(step)
 }
 
 sealed trait Result[+T]
@@ -177,17 +173,21 @@ sealed trait Request {
   def dataSource: DataSource[R, T]
   def status: Ref[IO, RequestStatus[T]]
 
-  def concrete: Request.Concrete[R, T] = Request.Concrete(request, dataSource, status)
+  def withRT: Request.WithRT[R, T] = this
 }
 
 object Request {
 
-  case class Concrete[R, T](request: R, dataSource: DataSource[R, T], status: Ref[IO, RequestStatus[T]])
+  type WithRT[R0, T0] =
+    Request {
+      type R = R0
+      type T = T0
+    }
 
-  def apply[R1, T1](r: R1, ds: DataSource[R1, T1], s: Ref[IO, RequestStatus[T1]]): Request =
+  def apply[R0, T0](r: R0, ds: DataSource[R0, T0], s: Ref[IO, RequestStatus[T0]]): Request.WithRT[R0, T0] =
     new Request {
-      override type R = R1
-      override type T = T1
+      override type R = R0
+      override type T = T0
 
       override def request: R                        = r
       override def dataSource: DataSource[R, T]      = ds
@@ -202,8 +202,8 @@ object RequestStatus {
   case class Failed(t: Throwable) extends RequestStatus[Nothing]
 }
 
-trait DataSource[R, A] {
-  def fetch(reqs: Seq[R]): IO[Map[R, A]]
+trait DataSource[R, T] {
+  def fetch(reqs: Seq[R]): IO[Map[R, T]]
 }
 
 trait Cache {

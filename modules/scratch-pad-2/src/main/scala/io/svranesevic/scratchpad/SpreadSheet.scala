@@ -141,8 +141,8 @@ object Formula {
   }
 
   protected def binaryOp(
-      error: String,
-      f: PartialFunction[(Value, Value), Value]
+    error: String,
+    f: PartialFunction[(Value, Value), Value]
   )(left: Value, right: Value): Value =
     f.lift((left, right)) match {
       case Some(value) => value

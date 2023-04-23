@@ -18,7 +18,7 @@ object PushStream {
   }
 
   abstract class Subscribable[E](
-      private val subscribers: mutable.Set[Subscriber[E]] = mutable.Set.empty[Subscriber[E]]
+    private val subscribers: mutable.Set[Subscriber[E]] = mutable.Set.empty[Subscriber[E]]
   ) {
 
     def subscribe(s: Subscriber[E]): Unit = subscribers.synchronized {
