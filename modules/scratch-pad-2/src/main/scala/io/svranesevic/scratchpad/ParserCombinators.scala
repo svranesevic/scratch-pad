@@ -9,11 +9,15 @@ trait Parser[+A] {
 
   def run(input: String): Parser.Result[A]
 
-  def ~[B](other: Parser[B]): Parser[(A, B)] =
+  def ~[B](other: Parser[B])(implicit zippable: Zippable[A, B]): Parser[zippable.Out] = zip(other)
+  def zip[B](other: Parser[B])(implicit zippable: Zippable[A, B]): Parser[zippable.Out] =
     for {
       left  <- self
       right <- other
-    } yield left -> right
+    } yield zippable.zip(left, right)
+
+  def zipWith[B, C](other: Parser[B])(fn: (A, B) => C): Parser[C] =
+    (self ~ other).map(fn.tupled)
 
   def |[C >: A, B <: C](other: => Parser[B]): Parser[C] =
     (input: String) =>
@@ -41,10 +45,67 @@ trait Parser[+A] {
       }
 
   def *>[B](p: Parser[B]): Parser[B] =
-    (self ~ p).map(_._2)
+    self.zipWith(p) { case (_, b) => b }
 
   def <*(p: Parser[_]): Parser[A] =
-    (self ~ p).map(_._1)
+    self.zipWith(p) { case (a, _) => a }
+}
+
+trait Zippable[-A, -B] {
+  type Out
+  def zip(a: A, b: B): Out
+}
+
+object Zippable extends ZippableLowPriority1 {
+
+  type Out[-A, -B, Out0] = Zippable[A, B] { type Out = Out0 }
+
+  implicit def leftIdentity[B]: Zippable.Out[Unit, B, B] =
+    new Zippable[Unit, B] {
+      type Out = B
+      override def zip(a: Unit, b: B): B = b
+    }
+}
+
+trait ZippableLowPriority1 extends ZippableLowPriority2 {
+
+  implicit def rightIdentity[A]: Zippable.Out[A, Unit, A] =
+    new Zippable[A, Unit] {
+      type Out = A
+      override def zip(a: A, b: Unit): A = a
+    }
+}
+
+trait ZippableLowPriority2 extends ZippableLowPriority3 {
+
+  implicit def tuple3[A, B, C]: Zippable.Out[(A, B), C, (A, B, C)] =
+    new Zippable[(A, B), C] {
+      type Out = (A, B, C)
+      override def zip(ab: (A, B), c: C): (A, B, C) = (ab._1, ab._2, c)
+    }
+
+  implicit def tuple4[A, B, C, D]: Zippable.Out[(A, B, C), D, (A, B, C, D)] =
+    new Zippable[(A, B, C), D] {
+      type Out = (A, B, C, D)
+      override def zip(abc: (A, B, C), d: D): (A, B, C, D) = (abc._1, abc._2, abc._3, d)
+    }
+
+  implicit def tuple5[A, B, C, D, E]: Zippable.Out[(A, B, C, D), E, (A, B, C, D, E)] =
+    new Zippable[(A, B, C, D), E] {
+      type Out = (A, B, C, D, E)
+      override def zip(abcd: (A, B, C, D), e: E): (A, B, C, D, E) = (abcd._1, abcd._2, abcd._3, abcd._4, e)
+    }
+
+  // etc.
+}
+
+trait ZippableLowPriority3 {
+
+  implicit def tuple[A, B]: Zippable.Out[A, B, (A, B)] =
+    new Zippable[A, B] {
+      type Out = (A, B)
+      override def zip(a: A, b: B): (A, B) = (a, b)
+    }
 }
 
 object Parser {
@@ -225,8 +286,8 @@ object ParserCombinatorsMain extends App {
   assert(aAndThenBorC.run("QBZ") == Failure("Expected: A, got QBZ"))
   assert(aAndThenBorC.run("AQZ") == Failure("Expected: C, got QZ"))
 
-  // Tuple issue
-  val abc: Parser[((Char, Char), Char)] = 'a' ~ 'b' ~ 'c'
+  // Zipping without tuple nesting!
+  val abc: Parser[(Char, Char, Char)] = 'a' ~ 'b' ~ 'c'
 
   // Sequencing
   val sequenced: Parser[List[Char]] =
@@ -330,10 +391,10 @@ object ParserCombinatorsMain extends App {
       integer ~> JNumber.apply
 
     private def integer: Parser[Long] =
-      (oneNine ~ digits) ~> (t => t._1 +: t._2) ~> (_.mkString.toLong) |
+      (oneNine.zipWith(digits)(_ +: _)) ~> (_.mkString.toLong) |
         digit ~> (_.toLong) |
-        (Parser.string("-") ~ oneNine ~ digits) ~> (t => t._1._1 +: t._1._2 +: t._2) ~> (_.mkString.toLong) |
-        (Parser.string("-") ~ digit) ~> (t => t._1 concat t._2) ~> (_.toLong)
+        (Parser.string("-") ~ oneNine ~ digits) ~> { case (a, b, c) => (a +: b +: c).mkString.toLong } |
+        (Parser.string("-").zipWith(digit)(_ concat _)) ~> (_.toLong)
     private def digits: Parser[List[String]] = oneOrMore(digit)
     private def digit: Parser[String]        = Parser.string("0") | oneNine
     private def oneNine: Parser[String]      = ('1' to '9').map(_.toString).map(Parser.string).reduce(_ | _)
