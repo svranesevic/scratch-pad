@@ -51,6 +51,7 @@ trait Parser[+A] {
     self.zipWith(p) { case (a, _) => a }
 }
 
+// For Scala 3 variant based on match types see Zipped.scala
 trait Zippable[-A, -B] {
   type Out
   def zip(a: A, b: B): Out
