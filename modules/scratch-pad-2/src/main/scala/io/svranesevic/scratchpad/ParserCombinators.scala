@@ -51,64 +51,6 @@ trait Parser[+A] {
     self.zipWith(p) { case (a, _) => a }
 }
 
-// For Scala 3 variant based on match types see Zipped.scala
-trait Zippable[-A, -B] {
-  type Out
-  def zip(a: A, b: B): Out
-}
-
-object Zippable extends ZippableLowPriority1 {
-
-  type Out[-A, -B, Out0] = Zippable[A, B] { type Out = Out0 }
-
-  implicit def leftIdentity[B]: Zippable.Out[Unit, B, B] =
-    new Zippable[Unit, B] {
-      type Out = B
-      override def zip(a: Unit, b: B): B = b
-    }
-}
-
-trait ZippableLowPriority1 extends ZippableLowPriority2 {
-
-  implicit def rightIdentity[A]: Zippable.Out[A, Unit, A] =
-    new Zippable[A, Unit] {
-      type Out = A
-      override def zip(a: A, b: Unit): A = a
-    }
-}
-
-trait ZippableLowPriority2 extends ZippableLowPriority3 {
-
-  implicit def tuple3[A, B, C]: Zippable.Out[(A, B), C, (A, B, C)] =
-    new Zippable[(A, B), C] {
-      type Out = (A, B, C)
-      override def zip(ab: (A, B), c: C): (A, B, C) = (ab._1, ab._2, c)
-    }
-
-  implicit def tuple4[A, B, C, D]: Zippable.Out[(A, B, C), D, (A, B, C, D)] =
-    new Zippable[(A, B, C), D] {
-      type Out = (A, B, C, D)
-      override def zip(abc: (A, B, C), d: D): (A, B, C, D) = (abc._1, abc._2, abc._3, d)
-    }
-
-  implicit def tuple5[A, B, C, D, E]: Zippable.Out[(A, B, C, D), E, (A, B, C, D, E)] =
-    new Zippable[(A, B, C, D), E] {
-      type Out = (A, B, C, D, E)
-      override def zip(abcd: (A, B, C, D), e: E): (A, B, C, D, E) = (abcd._1, abcd._2, abcd._3, abcd._4, e)
-    }
-
-  // etc.
-}
-
-trait ZippableLowPriority3 {
-
-  implicit def tuple[A, B]: Zippable.Out[A, B, (A, B)] =
-    new Zippable[A, B] {
-      type Out = (A, B)
-      override def zip(a: A, b: B): (A, B) = (a, b)
-    }
-}
-
 object Parser {
 
   import Parser.Result._
@@ -288,7 +230,16 @@ object ParserCombinatorsMain extends App {
   assert(aAndThenBorC.run("AQZ") == Failure("Expected: C, got QZ"))
 
   // Zipping without tuple nesting!
-  val abc: Parser[(Char, Char, Char)] = 'a' ~ 'b' ~ 'c'
+  val abc: Parser[(Char, Char, Char)]               = 'a' ~ 'b' ~ 'c'
+  val abcd: Parser[(Char, Char, Char, Char)]        = 'a' ~ 'b' ~ 'c' ~ 'd'
+  val abcde: Parser[(Char, Char, Char, Char, Char)] = 'a' ~ 'b' ~ 'c' ~ 'd' ~ 'e'
+
+  // Zipping 'penetrates' into Either and avoids tuple nesting!
+  val zippedEither: Parser[Either[Int, (Char, Char, Long)]] = {
+    val eitherCC: Parser[Either[Int, (Char, Char)]] = Parser.succeed(Right('a' -> 'b'))
+    val eitherL: Parser[Either[Int, Long]]          = Parser.succeed(Right(42L))
+    eitherCC zip eitherL
+  }
 
   // Sequencing
   val sequenced: Parser[List[Char]] =
