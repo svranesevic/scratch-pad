@@ -2,6 +2,7 @@
 .bloop
 .bsp
 .metals
+.scala-build
 target
 project/target
 metals.sbt

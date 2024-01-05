@@ -9,13 +9,13 @@ lazy val commonDependencies = Seq(
 lazy val `scratch-pad-2` = (project in file("modules/scratch-pad-2"))
   .settings(
     scalaVersion := "2.13.10",
-    libraryDependencies ++= commonDependencies
+    libraryDependencies ++= commonDependencies,
   )
   .enablePlugins(JmhPlugin)
 
 lazy val `scratch-pad-3` = (project in file("modules/scratch-pad-3"))
   .settings(
-    scalaVersion := "3.3.0-RC4",
-    libraryDependencies ++= commonDependencies
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= commonDependencies,
   )
   .enablePlugins(JmhPlugin)
