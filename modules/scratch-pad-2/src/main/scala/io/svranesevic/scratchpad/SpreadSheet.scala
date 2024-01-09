@@ -21,7 +21,7 @@ trait Spreadsheet {
     } yield cellAt(col, row)
   }
 
-  protected def cellAt(col: Int, row: Int): Cell
+  def cellAt(col: Int, row: Int): Cell
 }
 
 object Spreadsheet {
@@ -33,7 +33,7 @@ object Spreadsheet {
 
     val map: mutable.Map[(Int, Int), Cell] = collection.mutable.Map.empty
 
-    override protected def cellAt(col: Int, row: Int): Cell =
+    override def cellAt(col: Int, row: Int): Cell =
       map.getOrElse(((col, row)), Cell(col, row))
 
     override def evaluate(col: Int, row: Int): Value = cellAt(col, row).evaluate(this)
@@ -77,7 +77,7 @@ sealed trait Formula {
     this match {
       case Formula.TextLiteral(value)      => Value.Text(value)
       case Formula.NumericLiteral(value)   => Value.Number(value)
-      case Formula.CellReference(col, row) => spreadsheet.evaluate(col, row)
+      case Formula.CellReference(col, row) => spreadsheet.cellAt(col, row).value
       case Formula.Function(operation, operands) =>
         val operandsValues = operands.map(_.evaluate(spreadsheet))
         operation.apply(operandsValues)
@@ -85,7 +85,7 @@ sealed trait Formula {
 }
 object Formula {
   case class TextLiteral(value: String)                              extends Formula
-  case class NumericLiteral(valuet: BigDecimal)                      extends Formula
+  case class NumericLiteral(value: BigDecimal)                       extends Formula
   case class CellReference(col: Int, row: Int)                       extends Formula
   case class Function(operation: Operation, operands: List[Formula]) extends Formula
 }
