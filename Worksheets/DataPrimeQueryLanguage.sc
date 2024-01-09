@@ -2,6 +2,9 @@
 //> using dep org.parboiled::parboiled:2.5.1
 //> using dep com.lihaoyi::pprint:0.8.1
 
+// Parsing interesting bits of Coralogix DataPrime Query Language into an AST
+// See https://coralogix.com/docs/dataprime-query-language/
+
 import org.parboiled2.*
 import pprint.*
 
