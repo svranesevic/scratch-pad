@@ -1,6 +1,6 @@
 # Scratch Pad
 
-Having fun with implementing concepts, from scratch.
+Having fun while implementing various ideas, from scratch.
 
 Scribbles:
   - Parser Combinator & Parsing JSON into an AST - [ParserCombinators.scala](modules/scratch-pad-2/src/main/scala/io/svranesevic/scratchpad/ParserCombinators.scala)
