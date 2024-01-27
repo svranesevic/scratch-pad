@@ -1,6 +1,7 @@
 //> using scala 3.3.1
 //> using dep org.parboiled::parboiled:2.5.1
 //> using dep com.lihaoyi::pprint:0.8.1
+//> using dep org.scalameta::munit:0.7.29
 
 // Parsing interesting bits of Coralogix DataPrime Query Language into an AST
 // See https://coralogix.com/docs/dataprime-query-language/
@@ -60,8 +61,17 @@ class QueryParser(val input: ParserInput) extends Parser {
     "'" ~ capture(zeroOrMore(noneOf("'"))) ~ "'" ~ WS ~> Query.Literal.StringValue.apply
   }
 
-  def NumberLiteral: Rule1[Query.Literal.NumberValue] = rule {
-    capture(oneOrMore(CharPredicate.Digit)) ~ WS ~> (_.toLong) ~> Query.Literal.NumberValue.apply
+  def NumberLiteral: Rule1[Query.Literal.NumberValue] = {
+    import CharPredicate.{ Digit, Digit19 }
+    def Digits   = rule { oneOrMore(Digit) }
+    def Integer  = rule { optional('-') ~ (Digit19 ~ Digits | Digit) }
+    def Fraction = rule { "." ~ Digits }
+    def Exponent = rule { ignoreCase('e') ~ optional(anyOf("+-")) ~ Digits }
+
+    rule {
+      capture(Integer ~ optional(Fraction) ~ optional(Exponent)) ~ WS ~>
+        (str => Query.Literal.NumberValue(BigDecimal(str)))
+    }
   }
 
   def RegExpLiteral: Rule1[Query.Literal.RegExp] = rule {
@@ -72,12 +82,12 @@ class QueryParser(val input: ParserInput) extends Parser {
     Field ~> Query.Literal.KeyPath.apply
   }
 
-  def Literal: Rule1[Query.Literal] = rule {
-    StringLiteral | NumberLiteral | RegExpLiteral | KeyPathLiteral
-  }
-
   def Expression: Rule1[Query.Expression] = rule {
-    Literal
+    MathExpression |
+      StringLiteral |
+      NumberLiteral |
+      RegExpLiteral |
+      KeyPathLiteral
   }
 
   def ConditionExpression: Rule1[Query.ConditionExpression] = rule {
@@ -106,6 +116,26 @@ class QueryParser(val input: ParserInput) extends Parser {
       WS("<=") ~ push(Query.ComparisonOp.Leq) |
       WS(">") ~ push(Query.ComparisonOp.Gt) |
       WS(">=") ~ push(Query.ComparisonOp.Geq)
+  }
+
+  def MathExpression: Rule1[Query.Expression] = rule {
+    MathTerm ~ zeroOrMore(
+      WS("+") ~ MathTerm ~> (Query.MathExpression(_, Query.MathOp.Add, _)) |
+        WS("-") ~ MathTerm ~> (Query.MathExpression(_, Query.MathOp.Sub, _))
+    )
+  }
+
+  def MathTerm: Rule1[Query.Expression] = rule {
+    MathFactor ~ zeroOrMore(
+      WS("*") ~ MathFactor ~> (Query.MathExpression(_, Query.MathOp.Mul, _)) |
+        WS("/") ~ MathFactor ~> (Query.MathExpression(_, Query.MathOp.Div, _))
+    )
+  }
+
+  def MathFactor: Rule1[Query.Expression] = rule {
+    WS("(") ~ MathExpression ~ WS(")") |
+      NumberLiteral |
+      KeyPathLiteral
   }
 
   def Operator: Rule1[Query.Operator] = rule {
@@ -183,10 +213,10 @@ object Query {
 
   sealed trait Literal extends Expression
   object Literal {
-    case class StringValue(value: String) extends Literal
-    case class NumberValue(value: Long)   extends Literal
-    case class RegExp(value: String)      extends Literal
-    case class KeyPath(field: Field)      extends Literal
+    case class StringValue(value: String)     extends Literal
+    case class NumberValue(value: BigDecimal) extends Literal
+    case class RegExp(value: String)          extends Literal
+    case class KeyPath(field: Field)          extends Literal
   }
 
   sealed trait ConditionExpression
@@ -197,9 +227,13 @@ object Query {
     case class Not(expr: ConditionExpression)                                    extends ConditionExpression
     case class Comparison(left: Expression, op: ComparisonOp, right: Expression) extends ConditionExpression
   }
-
   enum ComparisonOp {
     case Eq, Neq, Lt, Leq, Gt, Geq
+  }
+
+  case class MathExpression(left: Expression, op: MathOp, right: Expression) extends Expression
+  enum MathOp {
+    case Add, Sub, Mul, Div
   }
 
   enum ValueType {
@@ -219,7 +253,7 @@ object Query {
   }
 }
 
-val parser =
+var parser =
   QueryParser(
     """|source logs |
        |  filter $d.result == 'success' && ($d.region != 'eu-west-1' || $d.region == 'us-east-1') |
@@ -230,5 +264,92 @@ val parser =
 parser.Parser.run() match {
   case scala.util.Failure(cause: ParseError) => println(parser.formatError(cause))
   case scala.util.Failure(cause)             => throw cause
-  case scala.util.Success(result)            => pprint.pprintln(result)
+  case scala.util.Success(obtained) =>
+    import Query.*
+    import munit.Assertions.*
+
+    val expected =
+      Query(
+        Source.Logs,
+        Vector(
+          Operator.Filter(
+            ConditionExpression.And(
+              Vector(
+                ConditionExpression.Comparison(
+                  Literal.KeyPath(Field.UserData("result")),
+                  ComparisonOp.Eq,
+                  Literal.StringValue("success")
+                ),
+                ConditionExpression.Or(
+                  Vector(
+                    ConditionExpression.Comparison(
+                      Literal.KeyPath(Field.UserData("region")),
+                      ComparisonOp.Neq,
+                      Literal.StringValue("eu-west-1")
+                    ),
+                    ConditionExpression.Comparison(
+                      Literal.KeyPath(Field.UserData("region")),
+                      ComparisonOp.Eq,
+                      Literal.StringValue("us-east-1")
+                    )
+                  )
+                )
+              )
+            )
+          ),
+          Operator.OrderBy(
+            Vector(
+              Literal.KeyPath(Field.Metadata("severity")),
+              Literal.KeyPath(Field.Metadata("timestamp"))
+            ),
+            Sort.Desc
+          ),
+          Operator.Limit(42L)
+        )
+      )
+
+    assertEquals(obtained, expected)
+}
+
+parser = QueryParser(
+  """|source logs |
+       |  filter $d.result == 1 + 42 * 13 + $d.constant |
+       |  limit 42
+       |""".stripMargin
+)
+parser.Parser.run() match {
+  case scala.util.Failure(cause: ParseError) => println(parser.formatError(cause))
+  case scala.util.Failure(cause)             => throw cause
+  case scala.util.Success(obtained) =>
+    import Query.*
+    import munit.Assertions.*
+
+    val expected =
+      Query(
+        Source.Logs,
+        Vector(
+          Operator.Filter(
+            ConditionExpression.Comparison(
+              Literal.KeyPath(Field.UserData("result")),
+              ComparisonOp.Eq,
+              MathExpression(
+                MathExpression(
+                  Literal.NumberValue(1),
+                  MathOp.Add,
+                  MathExpression(
+                    Literal.NumberValue(42),
+                    MathOp.Mul,
+                    Literal.NumberValue(13)
+                  )
+                ),
+                MathOp.Add,
+                Literal.KeyPath(Field.UserData("constant"))
+              )
+            )
+          ),
+          Operator.Limit(count = 42L)
+        )
+      )
+
+    assertEquals(obtained, expected)
 }
