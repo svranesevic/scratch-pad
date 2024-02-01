@@ -15,10 +15,6 @@ class QueryParser(val input: ParserInput) extends Parser {
     QueryStatement ~ EOI
   }
 
-  def QueryStatement: Rule1[Query] = rule {
-    WS ~ Source ~ zeroOrMore(Pipe ~ Operator) ~> Query.apply
-  }
-
   def WS: Rule0 = rule {
     quiet(zeroOrMore(anyOf(" \n\r\t\f")))
   }
@@ -32,7 +28,7 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Keyword(s: String): Rule0 = rule {
-    ignoreCase(s.toLowerCase) ~ WS
+    atomic(ignoreCase(s.toLowerCase)) ~ oneOrMore(anyOf(" \n\r\t\f")).named("space")
   }
 
   def Keywords(s: String*): Rule0 = rule {
@@ -40,6 +36,10 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   // Grammar
+
+  def QueryStatement: Rule1[Query] = rule {
+    WS ~ Source ~ zeroOrMore(Pipe ~ Operator) ~> Query.apply
+  }
 
   def Source: Rule1[Query.Source] = rule {
     Keyword("source") ~ capture(oneOrMore(CharPredicate.AlphaNum ++ "_-.")) ~ WS ~> Query.Source.fromString
@@ -168,8 +168,8 @@ class QueryParser(val input: ParserInput) extends Parser {
 
   def Sort: Rule1[Query.Sort] =
     rule {
-      "asc" ~ push(Query.Sort.Asc) |
-        "desc" ~ push(Query.Sort.Desc)
+      Keyword("asc") ~ push(Query.Sort.Asc) |
+        Keyword("desc") ~ push(Query.Sort.Desc)
     }
 }
 
@@ -204,10 +204,10 @@ object Query {
   object Field {
     def apply(`type`: String, field: String): Field =
       `type` match {
-        case "m" => Field.Metadata(field)
-        case "l" => Field.Labels(field)
-        case "d" => Field.UserData(field)
-        case _   => Field.UserData(field)
+        case "m" | "metadata" => Field.Metadata(field)
+        case "l" | "labels"   => Field.Labels(field)
+        case "d" | "data"     => Field.UserData(field)
+        case _                => Field.UserData(field)
       }
   }
 
@@ -313,9 +313,9 @@ parser.Parser.run() match {
 
 parser = QueryParser(
   """|source logs |
-       |  filter $d.result == 1 + 42 * 13 + $d.constant |
-       |  limit 42
-       |""".stripMargin
+     |  filter $d.result == 1 + 42 * 13 + $d.constant |
+     |  limit 42
+     |""".stripMargin
 )
 parser.Parser.run() match {
   case scala.util.Failure(cause: ParseError) => println(parser.formatError(cause))
@@ -347,7 +347,7 @@ parser.Parser.run() match {
               )
             )
           ),
-          Operator.Limit(count = 42L)
+          Operator.Limit(42L)
         )
       )
 
