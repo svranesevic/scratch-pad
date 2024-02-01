@@ -83,7 +83,7 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Expression: Rule1[Query.Expression] = rule {
-    MathExpression |
+    ArithmeticExpression |
       StringLiteral |
       NumberLiteral |
       RegExpLiteral |
@@ -118,22 +118,22 @@ class QueryParser(val input: ParserInput) extends Parser {
       WS(">=") ~ push(Query.ComparisonOp.Geq)
   }
 
-  def MathExpression: Rule1[Query.Expression] = rule {
-    MathTerm ~ zeroOrMore(
-      WS("+") ~ MathTerm ~> (Query.MathExpression(_, Query.MathOp.Add, _)) |
-        WS("-") ~ MathTerm ~> (Query.MathExpression(_, Query.MathOp.Sub, _))
+  def ArithmeticExpression: Rule1[Query.Expression] = rule {
+    ArithmeticTerm ~ zeroOrMore(
+      WS("+") ~ ArithmeticTerm ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Add, _)) |
+        WS("-") ~ ArithmeticTerm ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Sub, _))
     )
   }
 
-  def MathTerm: Rule1[Query.Expression] = rule {
-    MathFactor ~ zeroOrMore(
-      WS("*") ~ MathFactor ~> (Query.MathExpression(_, Query.MathOp.Mul, _)) |
-        WS("/") ~ MathFactor ~> (Query.MathExpression(_, Query.MathOp.Div, _))
+  def ArithmeticTerm: Rule1[Query.Expression] = rule {
+    ArithmeticFactor ~ zeroOrMore(
+      WS("*") ~ ArithmeticFactor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Mul, _)) |
+        WS("/") ~ ArithmeticFactor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Div, _))
     )
   }
 
-  def MathFactor: Rule1[Query.Expression] = rule {
-    WS("(") ~ MathExpression ~ WS(")") |
+  def ArithmeticFactor: Rule1[Query.Expression] = rule {
+    WS("(") ~ ArithmeticExpression ~ WS(")") |
       NumberLiteral |
       KeyPathLiteral
   }
@@ -231,10 +231,12 @@ object Query {
     case Eq, Neq, Lt, Leq, Gt, Geq
   }
 
-  case class MathExpression(left: Expression, op: MathOp, right: Expression) extends Expression
-  enum MathOp {
+  case class ArithmeticExpression(left: Expression, op: ArithmeticOp, right: Expression) extends Expression
+  enum ArithmeticOp {
     case Add, Sub, Mul, Div
   }
+
+  case class Cast(expr: Expression, toType: ValueType) extends Expression
 
   enum ValueType {
     case Boolean, Number, String, Timestamp
@@ -332,17 +334,17 @@ parser.Parser.run() match {
             ConditionExpression.Comparison(
               Literal.KeyPath(Field.UserData("result")),
               ComparisonOp.Eq,
-              MathExpression(
-                MathExpression(
+              ArithmeticExpression(
+                ArithmeticExpression(
                   Literal.NumberValue(1),
-                  MathOp.Add,
-                  MathExpression(
+                  ArithmeticOp.Add,
+                  ArithmeticExpression(
                     Literal.NumberValue(42),
-                    MathOp.Mul,
+                    ArithmeticOp.Mul,
                     Literal.NumberValue(13)
                   )
                 ),
-                MathOp.Add,
+                ArithmeticOp.Add,
                 Literal.KeyPath(Field.UserData("constant"))
               )
             )
