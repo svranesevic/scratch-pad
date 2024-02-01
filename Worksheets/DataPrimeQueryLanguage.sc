@@ -90,32 +90,32 @@ class QueryParser(val input: ParserInput) extends Parser {
       KeyPathLiteral
   }
 
-  def ConditionExpression: Rule1[Query.ConditionExpression] = rule {
-    oneOrMore(ConditionTerms).separatedBy(WS("||")) ~> {
+  def LogicalExpression: Rule1[Query.LogicalExpression] = rule {
+    oneOrMore(LogicalTerms).separatedBy(WS("||")) ~> {
       case Seq(expr) => expr
-      case exprs     => Query.ConditionExpression.Or(exprs)
+      case exprs     => Query.LogicalExpression.Or(exprs)
     }
   }
 
-  def ConditionTerms: Rule1[Query.ConditionExpression] = rule {
-    oneOrMore(ConditionFactors).separatedBy(WS("&&")) ~> {
+  def LogicalTerms: Rule1[Query.LogicalExpression] = rule {
+    oneOrMore(LogicalFactors).separatedBy(WS("&&")) ~> {
       case Seq(expr) => expr
-      case exprs     => Query.ConditionExpression.And(exprs)
+      case exprs     => Query.LogicalExpression.And(exprs)
     }
   }
 
-  def ConditionFactors: Rule1[Query.ConditionExpression] = rule {
-    WS("(") ~ ConditionExpression ~ WS(")") |
-      Expression ~ ComparisonOp ~ Expression ~> Query.ConditionExpression.Comparison.apply
+  def LogicalFactors: Rule1[Query.LogicalExpression] = rule {
+    WS("(") ~ LogicalExpression ~ WS(")") |
+      Expression ~ RelationOp ~ Expression ~> Query.LogicalExpression.Relation.apply
   }
 
-  def ComparisonOp: Rule1[Query.ComparisonOp] = rule {
-    WS("==") ~ push(Query.ComparisonOp.Eq) |
-      WS("!=") ~ push(Query.ComparisonOp.Neq) |
-      WS("<") ~ push(Query.ComparisonOp.Lt) |
-      WS("<=") ~ push(Query.ComparisonOp.Leq) |
-      WS(">") ~ push(Query.ComparisonOp.Gt) |
-      WS(">=") ~ push(Query.ComparisonOp.Geq)
+  def RelationOp: Rule1[Query.RelationOp] = rule {
+    WS("==") ~ push(Query.RelationOp.Eq) |
+      WS("!=") ~ push(Query.RelationOp.Neq) |
+      WS("<") ~ push(Query.RelationOp.Lt) |
+      WS("<=") ~ push(Query.RelationOp.Leq) |
+      WS(">") ~ push(Query.RelationOp.Gt) |
+      WS(">=") ~ push(Query.RelationOp.Geq)
   }
 
   def ArithmeticExpression: Rule1[Query.Expression] = rule {
@@ -147,11 +147,11 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Filter: Rule1[Query.Operator.Filter] = rule {
-    Keywords("filter", "where") ~ ConditionExpression ~> Query.Operator.Filter.apply
+    Keywords("filter", "where") ~ LogicalExpression ~> Query.Operator.Filter.apply
   }
 
   def Block: Rule1[Query.Operator.Filter] = rule {
-    Keyword("block") ~ ConditionExpression ~> Query.ConditionExpression.Not.apply ~> Query.Operator.Filter.apply
+    Keyword("block") ~ LogicalExpression ~> Query.LogicalExpression.Not.apply ~> Query.Operator.Filter.apply
   }
 
   def Remove: Rule1[Query.Operator.Remove] = rule {
@@ -219,15 +219,15 @@ object Query {
     case class KeyPath(field: Field)          extends Literal
   }
 
-  sealed trait ConditionExpression
-  object ConditionExpression {
-    case class And(factors: Seq[ConditionExpression]) extends ConditionExpression
-    case class Or(terms: Seq[ConditionExpression])    extends ConditionExpression
+  sealed trait LogicalExpression extends Expression
+  object LogicalExpression {
+    case class Or(terms: Seq[LogicalExpression])    extends LogicalExpression
+    case class And(factors: Seq[LogicalExpression]) extends LogicalExpression
+    case class Not(expr: LogicalExpression)         extends LogicalExpression
 
-    case class Not(expr: ConditionExpression)                                    extends ConditionExpression
-    case class Comparison(left: Expression, op: ComparisonOp, right: Expression) extends ConditionExpression
+    case class Relation(left: Expression, op: RelationOp, right: Expression) extends LogicalExpression
   }
-  enum ComparisonOp {
+  enum RelationOp {
     case Eq, Neq, Lt, Leq, Gt, Geq
   }
 
@@ -248,7 +248,7 @@ object Query {
 
   sealed trait Operator
   object Operator {
-    case class Filter(condition: ConditionExpression)            extends Operator
+    case class Filter(condition: LogicalExpression)              extends Operator
     case class Remove(fields: Seq[Literal.KeyPath])              extends Operator
     case class OrderBy(fields: Seq[Literal.KeyPath], sort: Sort) extends Operator
     case class Limit(count: Long)                                extends Operator
@@ -275,23 +275,23 @@ parser.Parser.run() match {
         Source.Logs,
         Vector(
           Operator.Filter(
-            ConditionExpression.And(
+            LogicalExpression.And(
               Vector(
-                ConditionExpression.Comparison(
+                LogicalExpression.Relation(
                   Literal.KeyPath(Field.UserData("result")),
-                  ComparisonOp.Eq,
+                  RelationOp.Eq,
                   Literal.StringValue("success")
                 ),
-                ConditionExpression.Or(
+                LogicalExpression.Or(
                   Vector(
-                    ConditionExpression.Comparison(
+                    LogicalExpression.Relation(
                       Literal.KeyPath(Field.UserData("region")),
-                      ComparisonOp.Neq,
+                      RelationOp.Neq,
                       Literal.StringValue("eu-west-1")
                     ),
-                    ConditionExpression.Comparison(
+                    LogicalExpression.Relation(
                       Literal.KeyPath(Field.UserData("region")),
-                      ComparisonOp.Eq,
+                      RelationOp.Eq,
                       Literal.StringValue("us-east-1")
                     )
                   )
@@ -331,9 +331,9 @@ parser.Parser.run() match {
         Source.Logs,
         Vector(
           Operator.Filter(
-            ConditionExpression.Comparison(
+            LogicalExpression.Relation(
               Literal.KeyPath(Field.UserData("result")),
-              ComparisonOp.Eq,
+              RelationOp.Eq,
               ArithmeticExpression(
                 ArithmeticExpression(
                   Literal.NumberValue(1),
