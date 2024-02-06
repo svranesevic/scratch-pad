@@ -285,7 +285,7 @@ var parser =
        |""".stripMargin
   )
 parser.Parser.run() match {
-  case Left(cause: ParseError) => println(parser.formatError(cause))
+  case Left(cause) => println(parser.formatError(cause))
   case Right(obtained) =>
     import Query.*
     import munit.Assertions.*
@@ -340,7 +340,7 @@ parser = QueryParser(
      |""".stripMargin
 )
 parser.Parser.run() match {
-  case Left(cause: ParseError) => println(parser.formatError(cause))
+  case Left(cause) => println(parser.formatError(cause))
   case Right(obtained) =>
     import Query.*
     import munit.Assertions.*
