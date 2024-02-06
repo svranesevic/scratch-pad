@@ -87,14 +87,6 @@ class QueryParser(val input: ParserInput) extends Parser {
     Field ~> Query.Literal.KeyPath.apply
   }
 
-  def Expression: Rule1[Query.Expression] = rule {
-    ArithmeticExpression |
-      StringLiteral |
-      NumberLiteral |
-      RegExpLiteral |
-      KeyPathLiteral
-  }
-
   def LogicalExpression: Rule1[Query.LogicalExpression] = rule {
     oneOrMore(LogicalTerms).separatedBy(WS("||")) ~> {
       case Seq(expr) => expr
@@ -123,22 +115,22 @@ class QueryParser(val input: ParserInput) extends Parser {
       WS(">=") ~ push(Query.RelationOp.Geq)
   }
 
-  def ArithmeticExpression: Rule1[Query.Expression] = rule {
-    ArithmeticTerm ~ zeroOrMore(
-      WS("+") ~ ArithmeticTerm ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Add, _)) |
-        WS("-") ~ ArithmeticTerm ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Sub, _))
+  def Expression: Rule1[Query.Expression] = rule {
+    Term ~ zeroOrMore(
+      WS("+") ~ Term ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Add, _)) |
+        WS("-") ~ Term ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Sub, _))
     )
   }
 
-  def ArithmeticTerm: Rule1[Query.Expression] = rule {
-    ArithmeticFactor ~ zeroOrMore(
-      WS("*") ~ ArithmeticFactor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Mul, _)) |
-        WS("/") ~ ArithmeticFactor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Div, _))
+  def Term: Rule1[Query.Expression] = rule {
+    Factor ~ zeroOrMore(
+      WS("*") ~ Factor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Mul, _)) |
+        WS("/") ~ Factor ~> (Query.ArithmeticExpression(_, Query.ArithmeticOp.Div, _))
     )
   }
 
-  def ArithmeticFactor: Rule1[Query.Expression] = rule {
-    WS("(") ~ ArithmeticExpression ~ WS(")") |
+  def Factor: Rule1[Query.Expression] = rule {
+    WS("(") ~ Expression ~ WS(")") |
       StringLiteral ~> Cast.apply |
       NumberLiteral ~> Cast.apply |
       RegExpLiteral ~> Cast.apply |
@@ -240,7 +232,7 @@ object Query {
     case class KeyPath(field: Field)          extends Literal
   }
 
-  sealed trait LogicalExpression extends Expression
+  sealed trait LogicalExpression
   object LogicalExpression {
     case class Or(terms: Seq[LogicalExpression])    extends LogicalExpression
     case class And(factors: Seq[LogicalExpression]) extends LogicalExpression
