@@ -7,6 +7,7 @@
 // See https://coralogix.com/docs/dataprime-query-language/
 
 import org.parboiled2.*
+import org.parboiled2.Parser.DeliveryScheme.Either
 import pprint.*
 
 class QueryParser(val input: ParserInput) extends Parser {
@@ -28,11 +29,15 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Keyword(s: String): Rule0 = rule {
-    atomic(ignoreCase(s.toLowerCase)) ~ oneOrMore(anyOf(" \n\r\t\f")).named("space")
+    atomic(ignoreCase(s.toLowerCase)) ~ oneOrMore(anyOf(" \n\r\t\f")).named("Space")
   }
 
-  def Keywords(s: String*): Rule0 = rule {
-    s.map(Keyword).reduce((l, r) => rule(l | r))
+  def Keyword(s1: String, s2: String): Rule0 = rule {
+    Keyword(s1) | Keyword(s2)
+  }
+
+  def Keyword(s1: String, s2: String, s3: String): Rule0 = rule {
+    Keyword(s1) | Keyword(s2) | Keyword(s3)
   }
 
   // Grammar
@@ -141,14 +146,14 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Type: Rule1[Query.ValueType] = rule {
-    Keyword("boolean") ~ push(Query.ValueType.Boolean) |
-      Keyword("string") ~ push(Query.ValueType.String) |
-      Keyword("number") ~ push(Query.ValueType.Number) |
+    Keyword("boolean", "bool") ~ push(Query.ValueType.Boolean) |
+      Keyword("string", "str") ~ push(Query.ValueType.String) |
+      Keyword("number", "num") ~ push(Query.ValueType.Number) |
       Keyword("timestamp") ~ push(Query.ValueType.Timestamp)
   }
 
   def Cast(expr: Query.Expression): Rule1[Query.Expression] = rule {
-    optional(WS(':') ~ Type) ~> {
+    optional(':' ~ Type) ~> {
       case Some(toType) => Query.Cast(expr, toType)
       case None         => expr
     }
@@ -163,7 +168,7 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Filter: Rule1[Query.Operator.Filter] = rule {
-    Keywords("filter", "where") ~ LogicalExpression ~> Query.Operator.Filter.apply
+    Keyword("filter", "f", "where") ~ LogicalExpression ~> Query.Operator.Filter.apply
   }
 
   def Block: Rule1[Query.Operator.Filter] = rule {
@@ -171,7 +176,7 @@ class QueryParser(val input: ParserInput) extends Parser {
   }
 
   def Remove: Rule1[Query.Operator.Remove] = rule {
-    Keywords("remove") ~ oneOrMore(KeyPathLiteral).separatedBy(WS(',')) ~> Query.Operator.Remove.apply
+    Keyword("remove") ~ oneOrMore(KeyPathLiteral).separatedBy(WS(',')) ~> Query.Operator.Remove.apply
   }
 
   def OrderBy: Rule1[Query.Operator.OrderBy] = rule {
@@ -280,9 +285,8 @@ var parser =
        |""".stripMargin
   )
 parser.Parser.run() match {
-  case scala.util.Failure(cause: ParseError) => println(parser.formatError(cause))
-  case scala.util.Failure(cause)             => throw cause
-  case scala.util.Success(obtained) =>
+  case Left(cause: ParseError) => println(parser.formatError(cause))
+  case Right(obtained) =>
     import Query.*
     import munit.Assertions.*
 
@@ -336,9 +340,8 @@ parser = QueryParser(
      |""".stripMargin
 )
 parser.Parser.run() match {
-  case scala.util.Failure(cause: ParseError) => println(parser.formatError(cause))
-  case scala.util.Failure(cause)             => throw cause
-  case scala.util.Success(obtained) =>
+  case Left(cause: ParseError) => println(parser.formatError(cause))
+  case Right(obtained) =>
     import Query.*
     import munit.Assertions.*
 
