@@ -134,8 +134,24 @@ class QueryParser(val input: ParserInput) extends Parser {
 
   def ArithmeticFactor: Rule1[Query.Expression] = rule {
     WS("(") ~ ArithmeticExpression ~ WS(")") |
-      NumberLiteral |
-      KeyPathLiteral
+      StringLiteral ~> Cast.apply |
+      NumberLiteral ~> Cast.apply |
+      RegExpLiteral ~> Cast.apply |
+      KeyPathLiteral ~> Cast.apply
+  }
+
+  def Type: Rule1[Query.ValueType] = rule {
+    Keyword("boolean") ~ push(Query.ValueType.Boolean) |
+      Keyword("string") ~ push(Query.ValueType.String) |
+      Keyword("number") ~ push(Query.ValueType.Number) |
+      Keyword("timestamp") ~ push(Query.ValueType.Timestamp)
+  }
+
+  def Cast(expr: Query.Expression): Rule1[Query.Expression] = rule {
+    optional(WS(':') ~ Type) ~> {
+      case Some(toType) => Query.Cast(expr, toType)
+      case None         => expr
+    }
   }
 
   def Operator: Rule1[Query.Operator] = rule {
@@ -315,7 +331,7 @@ parser.Parser.run() match {
 
 parser = QueryParser(
   """|source logs |
-     |  filter $d.result == 1 + 42 * 13 + $d.constant |
+     |  filter $d.result == 1 + 42 * 13 + $d.constant:number |
      |  limit 42
      |""".stripMargin
 )
@@ -345,7 +361,7 @@ parser.Parser.run() match {
                   )
                 ),
                 ArithmeticOp.Add,
-                Literal.KeyPath(Field.UserData("constant"))
+                Cast(Literal.KeyPath(Field.UserData("constant")), ValueType.Number)
               )
             )
           ),
