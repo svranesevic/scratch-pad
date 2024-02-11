@@ -156,7 +156,8 @@ class QueryParser(val input: ParserInput) extends Parser {
       Block |
       Remove |
       OrderBy |
-      Limit
+      Limit |
+      Choose
   }
 
   def Filter: Rule1[Query.Operator.Filter] = rule {
@@ -184,6 +185,10 @@ class QueryParser(val input: ParserInput) extends Parser {
       Keyword("asc") ~ push(Query.Sort.Asc) |
         Keyword("desc") ~ push(Query.Sort.Desc)
     }
+
+  def Choose: Rule1[Query.Operator.Choose] = rule {
+    Keyword("choose") ~ oneOrMore(KeyPathLiteral).separatedBy(WS(',')) ~> Query.Operator.Choose.apply
+  }
 }
 
 case class Query(source: Query.Source, operators: Seq[Query.Operator])
@@ -265,6 +270,7 @@ object Query {
     case class Remove(fields: Seq[Literal.KeyPath])              extends Operator
     case class OrderBy(fields: Seq[Literal.KeyPath], sort: Sort) extends Operator
     case class Limit(count: Long)                                extends Operator
+    case class Choose(fields: Seq[Literal.KeyPath])              extends Operator
   }
 }
 
