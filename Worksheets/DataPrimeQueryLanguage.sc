@@ -1,8 +1,3 @@
-//> using scala 3.3.1
-//> using dep org.parboiled::parboiled:2.5.1
-//> using dep com.lihaoyi::pprint:0.8.1
-//> using dep org.scalameta::munit:0.7.29
-
 // Parsing interesting bits of Coralogix DataPrime Query Language into an AST
 // See https://coralogix.com/docs/dataprime-query-language/
 
