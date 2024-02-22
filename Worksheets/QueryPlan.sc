@@ -3,35 +3,30 @@ import zio.schema.*
 import munit.Assertions.*
 import pprint.pprintln
 
-sealed trait Plan[-Q, +R] { self =>
+sealed trait Plan[-Q, +R]
 
-  import Plan.*
-
-  def widen[R1](implicit ev: R <:< R1): Plan[Q, R1] =
-    self.asInstanceOf[Plan[Q, R1]]
-
-  def filter[R1](predicate: Plan[R1, Boolean])(using R <:< List[R1]): Plan[Q, List[R1]] =
-    Filter(self.widen, predicate)
-
-  def limit[R1](count: Int)(using R <:< List[R1]): Plan[Q, List[R1]] =
-    Limit(self.widen, count)
-
-  def project[R1, R2](projection: Plan[R1, R2])(using R <:< List[R1]): Plan[Q, List[R2]] =
-    Project(self.widen, projection)
-
-  def groupBy[R1, K](groupByKey: Plan[R1, K])(using R <:< List[R1]): Plan[Q, Map[K, List[R1]]] =
-    GroupBy(self.widen, groupByKey)
-
-  def groupAggregate[R1, R2, R3, K](
-    groupByKey: Plan[R1, K],
-    agg1: Plan[List[R1], R2],
-    agg2: Plan[List[R1], R3]
-  )(using
-    R <:< List[R1]
-  ): Plan[Q, List[(K, R2, R3)]] =
-    GroupAggregation(self.widen, groupByKey, agg1, agg2)
-}
 object Plan {
+
+  extension [Q, Item, R <: List[Item]](self: Plan[Q, R]) {
+    def filter(predicate: Plan[Item, Boolean]): Plan[Q, List[Item]] =
+      Filter(self, predicate)
+
+    def limit(count: Int): Plan[Q, List[Item]] =
+      Limit(self, count)
+
+    def project[R2](projection: Plan[Item, R2]): Plan[Q, List[R2]] =
+      Project(self, projection)
+
+    def groupBy[K](groupByKey: Plan[Item, K]): Plan[Q, Map[K, List[Item]]] =
+      GroupBy(self, groupByKey)
+
+    def groupAggregate[R2, R3, K](
+      groupByKey: Plan[Item, K],
+      agg1: Plan[List[Item], R2],
+      agg2: Plan[List[Item], R3]
+    ): Plan[Q, List[(K, R2, R3)]] =
+      GroupAggregation(self, groupByKey, agg1, agg2)
+  }
 
   case class Filter[Q, R](source: Plan[Q, List[R]], predicate: Plan[R, Boolean]) extends Plan[Q, List[R]]
 
@@ -79,11 +74,11 @@ object Field {
     Field(NonEmptyChunk(path, paths*))
 
   extension [S, A1, A <: Iterable[A1]](self: Field[S, A]) {
-    def contains(that: A1)(using A <:< Iterable[A1]): Predicate[S] =
-      Predicate.ContainsAny(self, Set(that))
-
     def /[A2](that: Field[A1, A2]): Field[S, A2] =
       Field(self.path ++ that.path)
+
+    def contains(that: A1): Predicate[S] =
+      Predicate.ContainsAny(self, Set(that))
   }
 }
 
