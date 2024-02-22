@@ -28,9 +28,8 @@ object QueryModelBuilder extends AccessorBuilder {
   override type Prism[F, S, A]  = Unit
 
   override def makeLens[F, S, A](product: Schema.Record[S], term: Schema.Field[S, A]): Lens[F, S, A] =
-    new QueryField(term.name) {
+    new QueryField[A](term.name) {
       override type Record = S
-      override type Value  = A
     }
 
   override def makeTraversal[S, A](collection: Schema.Collection[S, A], element: Schema[A]): Traversal[S, A] =
@@ -41,9 +40,9 @@ object QueryModelBuilder extends AccessorBuilder {
 }
 
 enum Predicate {
-  case Eq[A](field: QueryField, value: A)
-  case ContainsAny[A](field: QueryField, values: Set[A])
-  case In[A](field: QueryField, values: Set[A])
+  case Eq[A](field: QueryField[A], value: A)
+  case ContainsAny[A](field: QueryField[Iterable[A]], values: Set[A])
+  case In[A](field: QueryField[A], values: Set[A])
 
   case And(left: Predicate, right: Predicate)
   case Or(left: Predicate, right: Predicate)
@@ -52,44 +51,38 @@ enum Predicate {
   def ||(that: Predicate): Predicate = Or(this, that)
 }
 
-case class QueryField(val name: String) { self =>
+case class QueryField[Value](val name: String) { self =>
 
   type Record
-  type Value
+
+  def widen[Value1](using Value <:< Value1): QueryField[Value1] =
+    self.asInstanceOf[QueryField[Value1]]
 
   def =:=(value: Value): Predicate =
-    Predicate.Eq(this, value)
+    Predicate.Eq(self, value)
 
   def in(value: Set[Value]): Predicate =
-    Predicate.In(this, value)
+    Predicate.In(self, value)
 
   def /[Value1](that: QueryField.With[Value, Value1]): QueryField.With[Record, Value1] =
-    new QueryField(s"$name.${that.name}") {
+    new QueryField[Value1](s"$name.${that.name}") {
       override type Record = self.Record
-      override type Value  = Value1
     }
 
   def /[Item, Value1](
     that: QueryField.With[Item, Value1]
   )(using Value <:< Iterable[Item]): QueryField.With[Record, Value1] =
-    new QueryField(s"$name.${that.name}") {
+    new QueryField[Value1](s"$name.${that.name}") {
       override type Record = self.Record
-      override type Value  = Value1
     }
 
   def contains[Value1](value: Value1)(using Value <:< Iterable[Value1]): Predicate =
-    Predicate.ContainsAny(this, Set(value))
+    Predicate.ContainsAny(self.widen, Set(value))
 }
 object QueryField {
-  type With[Record1, Value1] =
-    QueryField {
+  type With[Record1, Value] =
+    QueryField[Value] {
       type Record = Record1
-      type Value  = Value1
-    }
-
-  type Of[Value1] =
-    QueryField {
-      type Value = Value1
     }
 }
 
