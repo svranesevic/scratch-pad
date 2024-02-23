@@ -8,19 +8,36 @@ enum Predicate[S] {
   case Eq[S, A](field: Field[S, A], value: A)       extends Predicate[S]
   case In[S, A](field: Field[S, A], values: Set[A]) extends Predicate[S]
 
-  case ContainsAny[S, A](field: Field[S, Iterable[A]], values: Set[A]) extends Predicate[S]
+  case ContainsAny[S, A](field: Field[S, Iterable[A]], values: Set[A])       extends Predicate[S]
+  case Contains[S, A](field: Field[S, Iterable[A]], predicate: Predicate[A]) extends Predicate[S]
 
   case And(left: Predicate[S], right: Predicate[S])
   case Or(left: Predicate[S], right: Predicate[S])
 
+  // Ops
   def &&(that: Predicate[S]): Predicate[S] = And(this, that)
   def ||(that: Predicate[S]): Predicate[S] = Or(this, that)
+
+  def prefix[S1](prefix: Field[S1, S]): Predicate[S1] =
+    this match {
+      case eq: Eq[?, ?] => eq.copy(field = eq.field.prefix(prefix))
+      case in: In[?, ?] => in.copy(field = in.field.prefix(prefix))
+
+      case containsAny: ContainsAny[?, ?] => containsAny.copy(field = containsAny.field.prefix(prefix))
+      case contains: Contains[?, ?]       => contains.copy(field = contains.field.prefix(prefix))
+
+      case And(left, right) => And(left.prefix(prefix), right.prefix(prefix))
+      case Or(left, right)  => Or(left.prefix(prefix), right.prefix(prefix))
+    }
 }
 
 case class Field[S, A](path: NonEmptyChunk[String]) { self =>
 
   def widen[A1](using A <:< A1): Field[S, A1] =
     self.asInstanceOf[Field[S, A1]]
+
+  def prefix[S1](field: Field[S1, S]): Field[S1, A] =
+    field / self
 
   def =:=(value: A): Predicate[S] =
     Predicate.Eq(self, value)
@@ -30,6 +47,9 @@ case class Field[S, A](path: NonEmptyChunk[String]) { self =>
 
   def /[A1](that: Field[A, A1]): Field[S, A1] =
     new Field[S, A1](self.path ++ that.path)
+
+  def where(predicate: Predicate[A]): Predicate[S] =
+    predicate.prefix(self)
 }
 object Field {
 
@@ -42,6 +62,15 @@ object Field {
 
     def contains(that: A1): Predicate[S] =
       Predicate.ContainsAny(self.widen, Set(that))
+
+    // Shadow `Field#where` which would accept ill-formed predicate of Iterable[A1].
+    // Signals that different fields, eg. CollectionField, should be introduced,
+    // but omitted here for sake of simplicity
+    def where(predicate: Predicate[A1]): Predicate[S] =
+      contains(predicate)
+
+    def contains(predicate: Predicate[A1]): Predicate[S] =
+      Predicate.Contains(self.widen, predicate)
   }
 }
 
@@ -130,5 +159,26 @@ assertEquals(
   And(
     Eq(Field("secondaryAddresses", "country"), "RS"),
     Eq(Field("secondaryAddresses", "city"), "BG")
+  )
+)
+
+// Reuse predicate / Ergonomic predicates on inner field(s)
+val addressPredicate: Predicate[Address] = Address.country =:= "RS" && Address.city =:= "BG"
+assertEquals(
+  Account.address.where(addressPredicate),
+  And(
+    Eq(Field("address", "country"), "RS"),
+    Eq(Field("address", "city"), "BG")
+  )
+)
+
+assertEquals(
+  Account.secondaryAddresses.contains(addressPredicate),
+  Contains(
+    Field("secondaryAddresses"),
+    And(
+      Eq(Field("country"), "RS"),
+      Eq(Field("city"), "BG")
+    )
   )
 )
