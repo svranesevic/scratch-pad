@@ -7,7 +7,7 @@ trait Parser[+A] {
 
   import Parser.Result._
 
-  def run(input: String): Parser.Result[A]
+  def parse(input: String): Parser.Result[A]
 
   def ~[B](other: Parser[B])(implicit zippable: Zippable[A, B]): Parser[zippable.Out] = zip(other)
   def zip[B](other: Parser[B])(implicit zippable: Zippable[A, B]): Parser[zippable.Out] =
@@ -19,36 +19,41 @@ trait Parser[+A] {
   def zipWith[B, C](other: Parser[B])(fn: (A, B) => C): Parser[C] =
     (self ~ other).map(fn.tupled)
 
-  def |[C >: A, B <: C](other: => Parser[B]): Parser[C] =
-    (input: String) =>
-      run(input) match {
-        case Failure(_)        => other.run(input)
-        case s @ Success(_, _) => s
-      }
+  def |[C >: A, B <: C](other: => Parser[B]): Parser[C] = input =>
+    parse(input) match {
+      case Failure(_)        => other.parse(input)
+      case s @ Success(_, _) => s
+    }
 
   def as[B](b: B): Parser[B] = self.map(_ => b)
 
   def ~>[B](f: A => B): Parser[B] = map(f)
-  def map[B](f: A => B): Parser[B] =
-    (input: String) =>
-      run(input) match {
-        case f @ Failure(_)        => f
-        case Success(value, input) => Success(f(value), input)
-      }
+  def map[B](f: A => B): Parser[B] = input =>
+    parse(input) match {
+      case f: Failure            => f
+      case Success(value, input) => Success(f(value), input)
+    }
 
   def ~~>[B](fp: A => Parser[B]): Parser[B] = flatMap(fp)
-  def flatMap[B](fp: A => Parser[B]): Parser[B] =
-    (input: String) =>
-      run(input) match {
-        case f @ Failure(_)        => f
-        case Success(value, input) => fp(value).run(input)
-      }
+  def flatMap[B](fp: A => Parser[B]): Parser[B] = input =>
+    parse(input) match {
+      case f @ Failure(_)        => f
+      case Success(value, input) => fp(value).parse(input)
+    }
 
   def *>[B](p: Parser[B]): Parser[B] =
     self.zipWith(p) { case (_, b) => b }
 
-  def <*(p: Parser[_]): Parser[A] =
+  def <*(p: Parser[?]): Parser[A] =
     self.zipWith(p) { case (a, _) => a }
+
+  def many: Parser[List[A]]                 = Parser.many(self)
+  def many(sep: Parser[?]): Parser[List[A]] = Parser.many(self, sep)
+
+  def many1: Parser[List[A]]                 = Parser.many1(self)
+  def many1(sep: Parser[?]): Parser[List[A]] = Parser.many1(self, sep)
+
+  def opt: Parser[Option[A]] = Parser.opt(self)
 }
 
 object Parser {
@@ -59,89 +64,101 @@ object Parser {
 
   implicit def char(c: Char): Parser[Char] = character(c)
 
-  def succeed[A](a: A): Parser[A] = (input: String) => Success(a, input)
+  def apply[A](parse: String => Result[A]): Parser[A] = parse.apply
 
-  def sequenceStackUnsafe[A](ps: List[Parser[A]]): Parser[List[A]] =
-    (input: String) =>
-      ps match {
-        case Nil => Success(Nil, input)
-        case head :: tail =>
-          def cons(headAndTail: (A, List[A])): List[A] = headAndTail._1 +: headAndTail._2
+  def const[A](a: A): Parser[A] = (input: String) => Success(a, input)
 
-          val parser = head ~ sequence(tail) ~> cons
-          parser.run(input)
-      }
+  def sequenceStackUnsafe[A](ps: List[Parser[A]]): Parser[List[A]] = input =>
+    ps match {
+      case Nil => Success(Nil, input)
+      case head :: tail =>
+        def cons(headAndTail: (A, List[A])): List[A] = headAndTail._1 +: headAndTail._2
 
-  def sequence[A](ps: List[Parser[A]]): Parser[List[A]] =
-    (input: String) => {
-      val res = scala.collection.mutable.ListBuffer[A]()
-
-      @tailrec
-      def go(input: String, ps: List[Parser[A]]): Result[List[A]] =
-        ps match {
-          case Nil => Success(res.toList, input)
-          case p :: ps =>
-            p.run(input) match {
-              case f @ Failure(_) => f
-              case Success(value, input) =>
-                res += value
-                go(input, ps)
-            }
-        }
-
-      go(input, ps)
+        val parser = head ~ sequenceStackUnsafe(tail) ~> cons
+        parser.parse(input)
     }
 
-  def string(s: String): Parser[String] =
-    (input: String) =>
-      if (input.startsWith(s)) Success(s, input.drop(s.length))
-      else Failure(s"Expected: $s, got $input")
+  def sequence[A](ps: List[Parser[A]]): Parser[List[A]] = { input =>
+    val res = scala.collection.mutable.ListBuffer[A]()
+
+    @tailrec
+    def go(input: String, ps: List[Parser[A]]): Result[List[A]] =
+      ps match {
+        case Nil => Success(res.toList, input)
+        case p :: ps =>
+          p.parse(input) match {
+            case f @ Failure(_) => f
+            case Success(value, input) =>
+              res += value
+              go(input, ps)
+          }
+      }
+
+    go(input, ps)
+  }
+
+  def regex(pattern: String): Parser[String] = {
+    val regex = new scala.util.matching.Regex(s"^($pattern).*")
+    Parser { input =>
+      regex.findFirstMatchIn(input) match {
+        case None =>
+          Result.Failure(s"Expected regex: $pattern, got $input")
+        case Some(m) =>
+          val matchh = m.group(1)
+          Result.Success(matchh, input.drop(matchh.size))
+      }
+    }
+  }
+
+  def string(s: String): Parser[String] = input =>
+    if (input.startsWith(s)) Success(s, input.drop(s.length))
+    else Failure(s"Expected: $s, got $input")
 
   def character(c: Char): Parser[Char] = {
     val cAsStr = c.toString
-    (input: String) =>
+    Parser { input =>
       if (input.startsWith(cAsStr)) Success(c, input.drop(1))
       else Failure(s"Expected: $cAsStr, got $input")
+    }
   }
 
-  def zeroOrMoreStackUnsafe[A](p: Parser[A]): Parser[List[A]] = oneOrMore(p) | Parser.succeed(Nil)
+  def manyStackUnsafe[A](p: => Parser[A]): Parser[List[A]] = p.many1 | Parser.const(Nil)
 
-  def zeroOrMore[A](p: Parser[A]): Parser[List[A]] =
-    (input: String) => {
-      val res = scala.collection.mutable.ListBuffer[A]()
+  def many[A](p: Parser[A]): Parser[List[A]] = { input =>
+    val res = scala.collection.mutable.ListBuffer[A]()
 
-      @tailrec
-      def go(input: String): Result[List[A]] =
-        p.run(input) match {
-          case Failure(_) => Success(res.toList, input)
-          case Success(value, input) =>
-            res += value
-            go(input)
-        }
+    @tailrec
+    def go(input: String): Result[List[A]] =
+      p.parse(input) match {
+        case Failure(_) => Success(res.toList, input)
+        case Success(value, input) =>
+          res += value
+          go(input)
+      }
 
-      go(input)
-    }
+    go(input)
+  }
 
-  def zeroOrMoreStackUnsafe[A](p: Parser[A], separator: Parser[_]): Parser[List[A]] =
+  def manyStackUnsafe[A](p: => Parser[A], separator: => Parser[?]): Parser[List[A]] =
     for {
       head <- p
-      tail <- (separator *> zeroOrMoreStackUnsafe(p, separator)) | Parser.succeed(Nil)
+      tail <- (separator *> manyStackUnsafe(p, separator)) | Parser.const(Nil)
     } yield head +: tail
 
-  def zeroOrMore[A](p: Parser[A], separator: Parser[_]): Parser[List[A]] =
+  def many[A](p: Parser[A], separator: Parser[?]): Parser[List[A]] =
     (input: String) => {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
       def go(input: String): Result[List[A]] =
-        (separator *> p).run(input) match {
+        (separator *> p).parse(input) match {
           case Failure(_) => Success(res.toList, input)
           case Success(value, input) =>
             res += value
             go(input)
         }
 
-      p.run(input) match {
+      p.parse(input) match {
         case Success(head, input) =>
           res += head
           go(input)
@@ -149,26 +166,26 @@ object Parser {
       }
     }
 
-  def oneOrMore[A](p: Parser[A]): Parser[List[A]] =
+  def many1[A](p: Parser[A]): Parser[List[A]] =
     for {
       head <- p
-      tail <- zeroOrMore(p)
+      tail <- many(p)
     } yield head +: tail
 
-  def oneOrMore[A](p: Parser[A], separator: Parser[_]): Parser[List[A]] =
+  def many1[A](p: Parser[A], separator: Parser[?]): Parser[List[A]] =
     (input: String) => {
       val res = scala.collection.mutable.ListBuffer[A]()
 
       @tailrec
       def go(input: String): Result[List[A]] =
-        (separator *> p).run(input) match {
+        (separator *> p).parse(input) match {
           case Failure(_) => Success(res.toList, input)
           case Success(value, input) =>
             res += value
             go(input)
         }
 
-      p.run(input) match {
+      p.parse(input) match {
         case Success(head, input) =>
           res += head
           go(input)
@@ -176,14 +193,34 @@ object Parser {
       }
     }
 
-  def optional[A](p: Parser[A]): Parser[Option[A]] =
-    (input: String) =>
-      p.run(input) match {
-        case Failure(_)            => Success(None, input)
-        case Success(value, input) => Success(Some(value), input)
-      }
+  def opt[A](p: Parser[A]): Parser[Option[A]] = { input =>
+    p.parse(input) match {
+      case Failure(_)            => Success(None, input)
+      case Success(value, input) => Success(Some(value), input)
+    }
+  }
 
-  sealed trait Result[+A]
+  def oneOf[A](p: Parser[A], ps: Parser[A]*): Parser[A] =
+    oneOf(p +: ps)
+
+  def oneOf[A](ps: Iterable[Parser[A]]): Parser[A] = { input =>
+    val results = ps.toVector.map(_.parse(input))
+
+    val success = results
+      .collect { case s: Result.Success[A] => s }
+      .sortBy(_.input.size)
+
+    success.headOption
+      .orElse(results.headOption)
+      .getOrElse(throw new IllegalStateException("oneOf: Must have at least one Parser supplied"))
+  }
+
+  sealed trait Result[+A] {
+    def isSuccess: Boolean = this match {
+      case _: Success[?] => true
+      case _             => false
+    }
+  }
 
   object Result {
     case class Success[A](value: A, input: String) extends Result[A]
@@ -197,15 +234,15 @@ object ParserCombinatorsMain extends App {
   import Parser._
 
   // String
-  val stringPResult = string("void main").run("void main(int argc)")
+  val stringPResult = string("void main").parse("void main(int argc)")
   assert(stringPResult == Success("void main", "(int argc)"))
 
   // Char
-  val charPResult = character('v').run("void main(int argc)")
+  val charPResult = character('v').parse("void main(int argc)")
   assert(charPResult == Success('v', "oid main(int argc)"))
 
   // ~
-  val andThenResult = (string("void") ~ string(" main")).run("void main()")
+  val andThenResult = (string("void") ~ string(" main")).parse("void main()")
   assert(andThenResult == Success(("void", " main"), "()"))
 
   // ADT + Parse result type widening + DSL syntax with implicit conversions - instead of string("void") & string("int")
@@ -213,8 +250,8 @@ object ParserCombinatorsMain extends App {
   case object Void extends SimpleAdt
   case object Int  extends SimpleAdt
 
-  val orResult1: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).run("int a")
-  val orResult2: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).run("void a")
+  val orResult1: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).parse("int a")
+  val orResult2: Result[SimpleAdt] = (("void" as Void) | ("int" as Int)).parse("void a")
   assert(orResult1 == Success[SimpleAdt](Int, " a"))
   assert(orResult2 == Success[SimpleAdt](Void, " a"))
 
@@ -224,10 +261,10 @@ object ParserCombinatorsMain extends App {
   val C            = char('C')
   val bOrElseC     = B | C
   val aAndThenBorC = A ~ bOrElseC
-  assert(aAndThenBorC.run("ABZ") == Success(('A', 'B'), "Z"))
-  assert(aAndThenBorC.run("ACZ") == Success(('A', 'C'), "Z"))
-  assert(aAndThenBorC.run("QBZ") == Failure("Expected: A, got QBZ"))
-  assert(aAndThenBorC.run("AQZ") == Failure("Expected: C, got QZ"))
+  assert(aAndThenBorC.parse("ABZ") == Success(('A', 'B'), "Z"))
+  assert(aAndThenBorC.parse("ACZ") == Success(('A', 'C'), "Z"))
+  assert(aAndThenBorC.parse("QBZ") == Failure("Expected: A, got QBZ"))
+  assert(aAndThenBorC.parse("AQZ") == Failure("Expected: C, got QZ"))
 
   // Zipping without tuple nesting!
   val abc: Parser[(Char, Char, Char)]               = 'a' ~ 'b' ~ 'c'
@@ -236,60 +273,67 @@ object ParserCombinatorsMain extends App {
 
   // Zipping 'penetrates' into Either and avoids tuple nesting!
   val zippedEither: Parser[Either[Int, (Char, Char, Long)]] = {
-    val eitherCC: Parser[Either[Int, (Char, Char)]] = Parser.succeed(Right('a' -> 'b'))
-    val eitherL: Parser[Either[Int, Long]]          = Parser.succeed(Right(42L))
+    val eitherCC: Parser[Either[Int, (Char, Char)]] = Parser.const(Right('a' -> 'b'))
+    val eitherL: Parser[Either[Int, Long]]          = Parser.const(Right(42L))
     eitherCC zip eitherL
   }
 
   // Sequencing
   val sequenced: Parser[List[Char]] =
     sequence(character('a') :: character('b') :: character('c') :: Nil)
-  val sequencedResult = sequenced.run("abcDGF")
+  val sequencedResult = sequenced.parse("abcDGF")
   assert(sequencedResult == Success('a' :: 'b' :: 'c' :: Nil, "DGF"))
 
   val stacksafeParser = sequence(("a" * 10000).toCharArray().map(character _).toList)
-  assert(stacksafeParser.run("a" * 20000) == Success(List.fill(10000)('a'), "a" * 10000))
+  assert(stacksafeParser.parse("a" * 20000) == Success(List.fill(10000)('a'), "a" * 10000))
 
   // Contextual parsing
-  val digit: Parser[Int] = List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).map(d => string(d.toString)).reduce(_ | _) ~> (_.toInt)
+  val digit: Parser[Int]               = Parser.regex("[0-9]") ~> (_.toInt)
   val contextualParser: Parser[String] = digit ~~> (d => string((d * 2).toString))
-  val contextualParserResult           = contextualParser.run("510")
+  val contextualParserResult           = contextualParser.parse("510")
   assert(contextualParserResult == Success("10", ""))
 
   // Zero or more
-  val zeroOrMoreParser: Parser[List[String]] = zeroOrMore("A")
-  assert(zeroOrMoreParser.run("ABCD") == Success("A" :: Nil, "BCD"))
-  assert(zeroOrMoreParser.run("AACD") == Success("A" :: "A" :: Nil, "CD"))
-  assert(zeroOrMoreParser.run("AAAD") == Success("A" :: "A" :: "A" :: Nil, "D"))
-  assert(zeroOrMoreParser.run("|BCD") == Success(Nil, "|BCD"))
+  val manyParser: Parser[List[String]] = "A".many
+  assert(manyParser.parse("ABCD") == Success("A" :: Nil, "BCD"))
+  assert(manyParser.parse("AACD") == Success("A" :: "A" :: Nil, "CD"))
+  assert(manyParser.parse("AAAD") == Success("A" :: "A" :: "A" :: Nil, "D"))
+  assert(manyParser.parse("|BCD") == Success(Nil, "|BCD"))
 
   // One or more
-  val oneOrMoreParser: Parser[List[Int]] = oneOrMore(digit)
-  assert(oneOrMoreParser.run("1ABC") == Success(1 :: Nil, "ABC"))
-  assert(oneOrMoreParser.run("12BC") == Success(1 :: 2 :: Nil, "BC"))
-  assert(oneOrMoreParser.run("123C") == Success(1 :: 2 :: 3 :: Nil, "C"))
-  assert(oneOrMoreParser.run("1234") == Success(1 :: 2 :: 3 :: 4 :: Nil, ""))
-  assert(oneOrMoreParser.run("ABC") == Failure("Expected: 9, got ABC"))
+  val many1Parser: Parser[List[Int]] = digit.many1
+  assert(many1Parser.parse("1ABC") == Success(1 :: Nil, "ABC"))
+  assert(many1Parser.parse("12BC") == Success(1 :: 2 :: Nil, "BC"))
+  assert(many1Parser.parse("123C") == Success(1 :: 2 :: 3 :: Nil, "C"))
+  assert(many1Parser.parse("1234") == Success(1 :: 2 :: 3 :: 4 :: Nil, ""))
+  assert(many1Parser.parse("ABC") == Failure("Expected regex: [0-9], got ABC"))
 
   // Optional
-  val digitThenSemicolon = digit ~ optional(character(';'))
-  assert(digitThenSemicolon.run("1;") == Success((1, Some(';')), ""))
-  assert(digitThenSemicolon.run("1") == Success((1, None), ""))
+  val digitThenSemicolon = digit ~ character(';').opt
+  assert(digitThenSemicolon.parse("1;") == Success((1, Some(';')), ""))
+  assert(digitThenSemicolon.parse("1") == Success((1, None), ""))
 
   // Discarding ala Surround-by
   val surroundByParens: Parser[String] = '(' *> string("hello-world") <* ')'
-  assert(surroundByParens.run("(hello-world)") == Success("hello-world", ""))
-  assert(surroundByParens.run("(hello-world") == Failure("Expected: ), got "))
-  assert(surroundByParens.run("hello-world)") == Failure("Expected: (, got hello-world)"))
-  assert(surroundByParens.run("hello-world") == Failure("Expected: (, got hello-world"))
+  assert(surroundByParens.parse("(hello-world)") == Success("hello-world", ""))
+  assert(surroundByParens.parse("(hello-world") == Failure("Expected: ), got "))
+  assert(surroundByParens.parse("hello-world)") == Failure("Expected: (, got hello-world)"))
+  assert(surroundByParens.parse("hello-world") == Failure("Expected: (, got hello-world"))
 
   // Zero or more with separator
-  val zeroOrMoreSeparatedParser = zeroOrMore("A", zeroOrMore(' ') *> ',' <* zeroOrMore(' '))
-  assert(zeroOrMoreSeparatedParser.run("A") == Success(List("A"), ""))
-  assert(zeroOrMoreSeparatedParser.run("A,A,A") == Success(List("A", "A", "A"), ""))
-  assert(zeroOrMoreSeparatedParser.run("A ,A , A") == Success(List("A", "A", "A"), ""))
-  assert(zeroOrMoreSeparatedParser.run("A, A,   A") == Success(List("A", "A", "A"), ""))
-  assert(zeroOrMoreSeparatedParser.run("A , A,A") == Success(List("A", "A", "A"), ""))
+  val manySeparatedParser = "A".many(' '.many *> ',' <* ' '.many)
+  assert(manySeparatedParser.parse("A") == Success(List("A"), ""))
+  assert(manySeparatedParser.parse("A,A,A") == Success(List("A", "A", "A"), ""))
+  assert(manySeparatedParser.parse("A ,A , A") == Success(List("A", "A", "A"), ""))
+  assert(manySeparatedParser.parse("A, A,   A") == Success(List("A", "A", "A"), ""))
+  assert(manySeparatedParser.parse("A , A,A") == Success(List("A", "A", "A"), ""))
+
+  // Greedy oneOf
+  val greedyOneOf = Parser.oneOf(
+    Parser.string("Forty Six"),
+    Parser.string("Forty Six & 2")
+  )
+  assert(greedyOneOf.parse("Forty Six & 2") == Success("Forty Six & 2", ""))
 
   // JSON
   object JsonParser {
@@ -318,7 +362,7 @@ object ParserCombinatorsMain extends App {
         (('{' *> members <* '}') ~> JObject.apply)
 
     private def members: Parser[List[(String, JValue)]] =
-      oneOrMore(member, Parser.char(','))
+      member.many1(Parser.char(','))
 
     private def member: Parser[(String, JValue)] =
       (whitespace *> '"' *> characters <* '"' <* whitespace) ~ (char(':') *> element)
@@ -327,17 +371,17 @@ object ParserCombinatorsMain extends App {
       (('[' *> whitespace <* ']') as JArray(Nil)) |
         (('[' *> elements <* ']') ~> JArray.apply)
 
-    private def elements: Parser[List[JValue]] = oneOrMore(element, Parser.char(','))
+    private def elements: Parser[List[JValue]] = element.many1(Parser.char(','))
 
     private def element: Parser[JValue] = whitespace *> value <* whitespace
 
     private def string: Parser[JString] = '"' *> characters ~> JString.apply <* '"'
 
-    private def characters: Parser[String] = zeroOrMore(character) ~> (_.mkString)
+    private def characters: Parser[String] = character.many ~> (_.mkString)
 
     private def character: Parser[String] =
-      allowedCharacters.map(char).reduce(_ | _) ~> (_.toString)
-    private def allowedCharacters = (' ' to '~').filter(c => c != '"' && c != '\\').toList
+      Parser.oneOf(allowedCharacters).map(_.toString)
+    private def allowedCharacters = (' ' to '~').filter(c => c != '"' && c != '\\').map(char)
 
     private def number: Parser[JNumber] =
       integer ~> JNumber.apply
@@ -347,20 +391,20 @@ object ParserCombinatorsMain extends App {
         digit ~> (_.toLong) |
         (Parser.string("-") ~ oneNine ~ digits) ~> { case (a, b, c) => (a +: b +: c).mkString.toLong } |
         (Parser.string("-").zipWith(digit)(_ concat _)) ~> (_.toLong)
-    private def digits: Parser[List[String]] = oneOrMore(digit)
+    private def digits: Parser[List[String]] = digit.many1
     private def digit: Parser[String]        = Parser.string("0") | oneNine
-    private def oneNine: Parser[String]      = ('1' to '9').map(_.toString).map(Parser.string).reduce(_ | _)
+    private def oneNine: Parser[String]      = Parser.regex("[1-9]")
 
     private def boolean: Parser[JBoolean] = ("false" as JBoolean(false)) | ("true" as JBoolean(true))
     private def `null`: Parser[JNull]     = "null" as JNull
 
-    private def whitespace: Parser[_] = zeroOrMore(char(' ') | char('\n') | char('\r') | char('\t'))
+    private def whitespace: Parser[?] = Parser.regex("\\s*")
 
-    def run(json: String): Result[JValue] = jsonParser.run(json)
+    def parse(json: String): Result[JValue] = jsonParser.parse(json)
   }
 
   val Success(parsedJson, _) =
-    JsonParser.run("""
+    JsonParser.parse("""
       {
         "id": "15248544",
         "idType": "Snowflake",
