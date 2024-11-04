@@ -3,10 +3,10 @@ Zipped:
 ZippedWatch:
 	@scala-cli test --watch --revolver project.scala Zipped.test.scala
 
-Eval:
-	@scala-cli run project.scala Eval.sc
-EvalWatch:
-	@scala-cli test --watch --revolver project.scala Eval.test.scala
+Trampoline:
+	@scala-cli run project.scala Trampoline.sc
+TrampolineWatch:
+	@scala-cli test --watch --revolver project.scala Trampoline.test.scala
 
 ParserCombinator:
 	@scala-cli run project.scala ParserCombinator.sc
@@ -16,4 +16,4 @@ ParserCombinatorWatch:
 Test:
 	@scala-cli test project.scala *.test.scala
 
-.PHONY: Zipped ZippedWatch Eval EvalWatch ParserCombinator ParserCombinatorWatch
+.PHONY: Zipped ZippedWatch Trampoline TrampolineWatch ParserCombinator ParserCombinatorWatch
