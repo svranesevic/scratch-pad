@@ -17,6 +17,6 @@
 //> using dep org.typelevel::cats-core:2.12.0
 
 //> using file Zipped.sc
-//> using file Eval.sc
+//> using file Trampoline.sc
 
 //> using file ParserCombinator.sc

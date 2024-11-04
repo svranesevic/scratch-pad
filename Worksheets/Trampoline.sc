@@ -36,7 +36,11 @@ sealed trait Eval[+A] {
 object Eval {
 
   def now[A](a: => A): Eval[A]         = Done(a)
+  def always[A](a: => A): Eval[A]      = Defer(() => now(a))
   def defer[A](a: => Eval[A]): Eval[A] = Defer(() => a)
+
+  val True: Eval[Boolean]  = Done(true)
+  val False: Eval[Boolean] = Done(false)
 
   private final case class Done[A](a: A)                                    extends Eval[A]
   private final case class Defer[A](fn: () => Eval[A])                      extends Eval[A]

@@ -1,5 +1,5 @@
 import Zipped.*
-import Eval.*
+import Trampoline.*
 
 trait Parser[+A] { self =>
 
@@ -108,7 +108,7 @@ object Parser {
   def const[A](a: A): Parser[A] = Parser(input => Right(a -> input))
 
   def str(str: String): Parser[String] = Parser { input =>
-    if input.startsWith(str) then Right(str -> input.drop(str.length))
+    if (input.startsWith(str)) Right(str -> input.drop(str.length))
     else Left(s"Expected: $str, got $input")
   }
 

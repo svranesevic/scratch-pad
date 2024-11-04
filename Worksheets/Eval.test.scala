@@ -1,5 +1,5 @@
 import munit.*
-import Eval.*
+import Trampoline.*
 
 class EvalSpec extends FunSuite {
   test("now") {
@@ -20,7 +20,23 @@ class EvalSpec extends FunSuite {
   }
 
   test("flatMap - stack-safe") {
-    val obtained = (1 to 1_000_000).map(Eval.now(_)).reduce { case (l, r) => l.flatMap(_ => r) }
+    val obtained = (1 `to` 1_000_000).map(Eval.now(_)).reduce { case (l, r) => l.flatMap(_ => r) }
     assertEquals(obtained.value, 1_000_000)
+  }
+
+  test("mutual recursion") {
+    def even(n: Int): Eval[Boolean] =
+      Eval.always(n == 0).flatMap {
+        case true  => Eval.True
+        case false => odd(n - 1)
+      }
+
+    def odd(n: Int): Eval[Boolean] =
+      Eval.always(n == 0).flatMap {
+        case true  => Eval.False
+        case false => even(n - 1)
+      }
+
+    assertEquals(odd(199999).value, true)
   }
 }
