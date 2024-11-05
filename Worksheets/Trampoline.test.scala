@@ -39,4 +39,15 @@ class EvalSpec extends FunSuite {
 
     assertEquals(odd(199999).value, true)
   }
+
+  test("memoize") {
+    var count = 0
+    val res = Eval.memoize {
+      count += 1
+      42
+    }
+    res.value
+    res.value
+    assertEquals(count, 1)
+  }
 }
