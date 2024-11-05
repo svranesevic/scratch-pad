@@ -165,7 +165,7 @@ class ParserCombinatorSpec extends FunSuite {
 
       private def character: P[String] =
         P.oneOf(allowedCharacters).map(_.toString)
-      private def allowedCharacters = (' '.to('~')).filter(c => c != '"' && c != '\\').map(char)
+      private def allowedCharacters = ' '.to('~').filter(c => c != '"' && c != '\\').map(char)
 
       private def number: P[JNumber] =
         integer.map(JNumber.apply)

@@ -24,19 +24,17 @@ sealed trait Eval[+A] {
     case Left(eval)   => eval().evaluate
   }
 
-  final def map[B](f: A => B): Eval[B] = this match {
-    case Now(a)        => Now(f(a))
-    case Always(_)     => FlatMap(this, a => Now(f(a)))
-    case Memoize(_)    => ???
-    case FlatMap(_, _) => FlatMap(this, a => Now(f(a)))
-  }
+  final def map[B](f: A => B): Eval[B] =
+    flatMap(a => Now(f(a)))
 
   final def flatMap[B](f: A => Eval[B]): Eval[B] = this match {
     case Now(a)        => f(a)
+    case Memoize(v)    => FlatMap(v(), a => f(a))
     case Always(_)     => FlatMap(this, a => f(a))
-    case Memoize(_)    => FlatMap(this, a => f(a))
     case FlatMap(_, _) => FlatMap(this, a => f(a))
   }
+
+  final def flatten[B](using ev: A <:< Eval[B]): Eval[B] = flatMap(identity)
 
   final def memoize: Eval[A] = Memoize(() => this)
 }
@@ -44,7 +42,7 @@ sealed trait Eval[+A] {
 object Eval {
 
   def now[A](a: => A): Eval[A]         = Now(a)
-  def memoize[A](a: => A): Eval[A]     = Memoize(() => now(a))
+  def later[A](a: => A): Eval[A]       = Memoize(() => now(a))
   def always[A](a: => A): Eval[A]      = Always(() => now(a))
   def defer[A](a: => Eval[A]): Eval[A] = Always(() => a)
 

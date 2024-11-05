@@ -42,12 +42,36 @@ class EvalSpec extends FunSuite {
 
   test("memoize") {
     var count = 0
-    val res = Eval.memoize {
+    val eval = Eval.later {
       count += 1
       42
     }
-    res.value
-    res.value
+    eval.value
+    eval.value
+    assertEquals(count, 1)
+  }
+
+  test("memoize.map") {
+    var count = 0
+    val eval = Eval.later {
+      count += 1
+      42
+    }
+    val mapped = eval.map(_ * 2)
+    assertEquals(mapped.value, 84)
+    assertEquals(mapped.value, 84)
+    assertEquals(count, 1)
+  }
+
+  test("later.flatMap") {
+    var count = 0
+    val eval = Eval.later {
+      count += 1
+      42
+    }
+    val mapped = eval.flatMap(a => Eval.now(a * 2))
+    assertEquals(mapped.value, 84)
+    assertEquals(mapped.value, 84)
     assertEquals(count, 1)
   }
 }
