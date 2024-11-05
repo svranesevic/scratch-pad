@@ -18,7 +18,7 @@ trait Parser[+A] { self =>
     Eval.defer {
       self.eval(input).flatMap {
         case Left(msg)        => Eval.now(Left(msg))
-        case Right((a, left)) => Eval.defer(f(a).eval(left))
+        case Right((a, left)) => f(a).eval(left)
       }
     }
   }
@@ -57,7 +57,7 @@ trait Parser[+A] { self =>
   }
 
   def many1: Parser[List[A]] =
-    Parser.defer(this.zipWith(this.many)(_ :: _))
+    this.zipWith(this.many)(_ :: _)
 
   def many(sep: Parser[?]): Parser[List[A]] =
     many1(sep) | const(Nil)
@@ -72,7 +72,7 @@ object Parser {
     input => Eval.now(f(input))
 
   def defer[A](f: => Parser[A]): Parser[A] =
-    Parser.eval(f.eval)
+    f.eval(_)
 
   def eval[A](f: String => Eval[Either[String, (A, String)]]): Parser[A] =
     f(_)

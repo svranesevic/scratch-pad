@@ -119,6 +119,23 @@ class ParserCombinatorSpec extends FunSuite {
     assertEquals(obtained, expected)
   }
 
+  test("flatMap stack-safe") {
+    val p = (1 `to` 100_000).map(P.const).reduce { case (l, r) => l.flatMap(_ => r) }
+    p.parse("")
+  }
+
+  test("many stack-safe") {
+    val p     = P.digit.many
+    val input = List.fill(100_000)("1").mkString
+    p.parse(input)
+  }
+
+  test("many1 stack-safe") {
+    val p     = P.digit.many1
+    val input = List.fill(100_000)("1").mkString
+    p.parse(input)
+  }
+
   test("json") {
     object JsonParser {
       sealed trait JValue
